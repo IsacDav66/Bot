@@ -1,0 +1,181 @@
+// --- plugins/google_ai_responder.js ---
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
+
+// Importar módulos locales
+const config = require('./config');
+const utils = require('./utils');
+const stateManager = require('./state_manager');
+const stickerHandler = require('./sticker_handler');
+const imageGenerator = require('./image_generator');
+const messageProcessor = require('./message_processor');
+const apiHandler = require('./api_handler');
+const responseParser = require('./response_parser');
+const historyManager = require('./history_manager');
+const responseSender = require('./response_sender');
+
+// --- INICIALIZACIÓN DE GOOGLE AI (Globales para este plugin) ---
+let genAI;
+let textModel;
+let imageModel;
+let isGoogleAIInitialized = false;
+
+function initializeGoogleAIModels() {
+    if (isGoogleAIInitialized) return true;
+
+    if (config.GOOGLE_API_KEY === 'TU_API_KEY_AQUÍ' || !config.GOOGLE_API_KEY) {
+        console.error(`${utils.color.red}[Google AI Responder ERROR]${utils.color.reset} ¡API Key de Google inválida o placeholder!`);
+        return false;
+    }
+    try {
+        genAI = new GoogleGenerativeAI(config.GOOGLE_API_KEY);
+        textModel = genAI.getGenerativeModel({ model: config.TEXT_MODEL_NAME });
+        console.log(`${utils.color.green}[Google AI Responder]${utils.color.reset} Modelo de TEXTO inicializado: ${config.TEXT_MODEL_NAME}`);
+
+        imageModel = genAI.getGenerativeModel({
+            model: config.IMAGE_MODEL_NAME,
+            safetySettings: [  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE }, ],
+        });
+        console.log(`${utils.color.green}[Google AI Responder]${utils.color.reset} Modelo de IMAGEN inicializado: ${config.IMAGE_MODEL_NAME}`);
+        isGoogleAIInitialized = true;
+        return true;
+    } catch (initError) {
+        console.error(`${utils.color.red}[Google AI Responder ERROR]${utils.color.reset} Falló al inicializar modelos de Google AI:`, initError.message);
+        return false;
+    }
+}
+// --- FIN INICIALIZACIÓN ---
+
+
+module.exports = {
+    name: 'GoogleAIRespondedorModular', // Nombre actualizado
+    description: 'Responde a interacciones, recordando contexto, generando imágenes (experimental) y enviando stickers, de forma modular.',
+
+    // Exportar funciones de control de estado si es necesario para otros plugins (poco común)
+    // activateAI: stateManager.activateAI,
+    // deactivateAI: stateManager.deactivateAI,
+    // isAiCurrentlyActive: stateManager.isAiCurrentlyActive,
+
+    async checkMessage(client, message) {
+        console.log(`${utils.color.cyan}[CHECKMESSAGE_ENTRY]${utils.color.reset} Nuevo mensaje recibido. Body: "${message.body ? message.body.substring(0,50) : 'SIN_BODY'}" From: ${message.from} Type: ${message.type}`); // <--- LOG INICIAL
+        // 0. Inicializaciones y comprobaciones básicas
+        if (!initializeGoogleAIModels()) {
+            return false; // Si falla la inicialización de modelos, no continuar
+        }
+        if (!genAI || !textModel || !imageModel || !client.info?.wid?._serialized) {
+            console.error(`${utils.color.red}[Google AI ERROR]${utils.color.reset} Modelos o cliente no disponibles (post-init).`);
+            return false;
+        }
+
+        const messageText = message.body;
+        if (!messageText || messageText.trim() === '') return false;
+
+        const chatInfo = await messageProcessor.getChatInfo(message);
+        if (!chatInfo) return false;
+        const { chat, chatId } = chatInfo;
+
+        // 1. Determinar si el mensaje debe ser procesado por la IA
+        const quotedMsg = message.hasQuotedMsg ? await message.getQuotedMessage() : null;
+        const triggerResult = messageProcessor.shouldTriggerAI(
+            messageText,
+            quotedMsg,
+            client.info.wid._serialized,
+            chatId,
+            stateManager.activateAI, // Pasar funciones necesarias
+            stateManager.deactivateAI,
+            stateManager.isAiCurrentlyActive
+        );
+
+
+        if (triggerResult.isGoodbye) {
+            if (stateManager.deactivateAI(chatId)) { // `shouldTriggerAI` no debería hacer el reply de despedida
+                await message.reply('Entendido. ¡Hasta la próxima! 👋...');
+            }
+            return true;
+        }
+
+        if (!triggerResult.shouldProcess) {
+            // console.log(`${utils.color.blue}[Google AI DEBUG]${utils.color.reset} Mensaje NO CUMPLE criterios. Ignorando.`);
+            return false;
+        }
+        console.log(`${utils.color.green}[Google AI]${utils.color.reset} Procesando en ${chatId.split('@')[0]}. Razón: ${triggerResult.reason}. Texto AI: "${triggerResult.textForAI}"`);
+
+
+        // 2. Evitar procesar comandos
+        if (config.ALLOWED_PREFIXES.some(prefix => triggerResult.textForAI.startsWith(prefix))) {
+            console.log(`${utils.color.yellow}[Google AI DEBUG]${utils.color.reset} Mensaje parece comando. Ignorando.`);
+            return false;
+        }
+
+        // 3. Obtener información del remitente y prompt del sistema
+        let senderName = 'Usuario';
+        try { senderName = (await message.getContact()).pushname || (message.author || message.from).split('@')[0]; }
+        catch (e) { senderName = (message.author || message.from)?.split('@')[0] || 'Desconocido'; }
+
+        const systemPrompt = messageProcessor.getSystemPrompt(); // Asume que getSystemPrompt ya no necesita argumentos dinámicos
+
+        // CASO ESPECIAL: Foto de introducción directa
+        if (triggerResult.generateIntroPhoto) {
+            console.log(`${utils.color.blue}[IMAGE GEN DEBUG]${utils.color.reset} Solicitud de foto de introducción directa.`);
+            const introPhotoPrompt = "realistic selfie photo of Sofia, 17, fair skin, freckles, long light brown hair with bangs, blue-grey eyes, shy smile, Queen t-shirt, indoor lighting";
+            
+            // Usar responseSender para la respuesta de texto + imagen
+            await responseSender.sendBotResponse(
+                client, message, chat,
+                "¡Holi! Soy Sofía 😊 Aquí una fotito para que me conozcas:",
+                false, // mentionCreator
+                introPhotoPrompt, // imagePromptFromAI
+                'sofia_happy', // detectedMoodHint
+                textModel, // Pasar modelos si son necesarios en capas más profundas
+                imageModel,
+                stickerHandler.sendRandomSticker, // Pasar funciones
+                imageGenerator.generateAndSendImageWithRetries
+            );
+
+            historyManager.updateChatHistory(chatId, `${senderName}: ${triggerResult.textForAI}`, "¡Holi! Soy Sofía 😊 (Envié una foto de presentación)");
+            return true;
+        }
+
+        // 4. Llamar a la API de texto de Gemini
+        const apiCallResult = await apiHandler.callTextAPI(
+            chatId,
+            senderName,
+            triggerResult.textForAI,
+            systemPrompt,
+            textModel // Pasar el modelo
+        );
+
+
+        // 5. Procesar la respuesta de la IA (tags, mood)
+        let processedResponse;
+        let userMessageForHistory = apiCallResult.userMessage; // Lo que se envió a la IA
+
+        if (apiCallResult.success) {
+            processedResponse = responseParser.processTagsAndMood(apiCallResult.rawText);
+        } else {
+            console.error(`${utils.color.red}[Google AI]${utils.color.reset} API de texto falló. No se enviará respuesta de IA.`);
+            historyManager.updateChatHistory(chatId, userMessageForHistory, `(Error de la IA: ${apiCallResult.errorText || 'Desconocido'})`);
+            // await message.reply("Uhm, mi cerebro hizo 'plop' 🤯. ¿Podrías repetirlo?");
+            return true;
+        }
+
+        // 6. Actualizar historial
+        historyManager.updateChatHistory(chatId, userMessageForHistory, processedResponse.cleanedText);
+
+        // 7. Enviar la respuesta final
+        await responseSender.sendBotResponse(
+            client, message, chat,
+            processedResponse.cleanedText,
+            processedResponse.mentionCreator,
+            processedResponse.imagePromptFromAI,
+            triggerResult.moodHint || processedResponse.detectedMoodHint,
+            textModel, // Pasar modelos si son necesarios en capas más profundas
+            imageModel,
+            stickerHandler.sendRandomSticker,
+            imageGenerator.generateAndSendImageWithRetries // Pasar la función de imageGenerator
+        );
+        return true;
+    }
+};

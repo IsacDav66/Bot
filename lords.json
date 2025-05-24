@@ -1,0 +1,18 @@
+{
+  "120363400815737734@g.us": {
+    "name": "a",
+    "path": [ "excel" ],
+    "allowedNumbers": [
+      { "id": "1658008416509", "numerocelular": "51959442730" }, 
+      { "id": "51988388664",   "numerocelular": "51988388664" }  
+    ]
+  },
+    "120363418624263010@g.us": {
+    "name": ". Pruebas",
+    "path": [ "excel" ],
+    "allowedNumbers": [
+      { "id": "1658008416509", "numerocelular": "51959442730" }, 
+      { "id": "51988388664",   "numerocelular": "51988388664" }  
+    ]
+  }
+}
