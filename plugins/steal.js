@@ -3,7 +3,7 @@
 
 const { getUserData, saveUserData, msToTime } = require('./shared-economy');
 
-const COOLDOWN_STEAL_MS = 0; // Restaurado, ponlo a 0 para pruebas si es necesario
+const COOLDOWN_STEAL_MS = 30 * 60 * 1000;
 const STEAL_SUCCESS_CHANCE = 0.60;
 const STEAL_MIN_PERCENT = 0.05;
 const STEAL_MAX_PERCENT = 0.20;
