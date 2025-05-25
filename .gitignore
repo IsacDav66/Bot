@@ -3,3 +3,4 @@ node_modules
 .wwebjs_auth_chrome
 .wwebjs_cache
 userData.json
+bot_database.sqlite
