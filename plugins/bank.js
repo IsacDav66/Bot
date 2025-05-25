@@ -47,7 +47,7 @@ const execute = async (client, message, args, commandName) => {
 
         user.money -= amount;
         user.bank += amount;
-        await saveUserData();
+        await saveUserData(userId, user);
         console.log(`[Bank Plugin] ${userId} depositó ${amount}. Dinero: ${user.money}, Banco: ${user.bank}`);
         return message.reply(`✅ Depositaste ${MONEY_SYMBOL}${amount} en el banco.\n` +
                              `Dinero en mano: ${MONEY_SYMBOL}${user.money}\n` +
@@ -80,7 +80,7 @@ const execute = async (client, message, args, commandName) => {
 
         user.bank -= amount;
         user.money += amount;
-        await saveUserData();
+        await saveUserData(userId, user);
         console.log(`[Bank Plugin] ${userId} retiró ${amount} (usando '${actionType}'). Dinero: ${user.money}, Banco: ${user.bank}`); // Log actualizado
         return message.reply(`✅ Retiraste ${MONEY_SYMBOL}${amount} del banco.\n` +
                              `Dinero en mano: ${MONEY_SYMBOL}${user.money}\n` +

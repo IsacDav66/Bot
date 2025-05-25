@@ -1,7 +1,7 @@
 // plugins/millonarios.js
 // Muestra un ranking de los usuarios con más dinero.
 
-const { getAllUserData, getUserData } = require('./shared-economy');
+const { getAllUserData, getUserData } = require('./shared-economy'); // Ambas son async ahora
 const MONEY_SYMBOL = '$';
 
 module.exports = {
@@ -11,35 +11,29 @@ module.exports = {
     category: 'Economía',
     async execute(client, message, args, commandName) {
         console.log("[Millonarios Plugin] Iniciando obtención de ranking...");
-        const allUserData = getAllUserData();
+        // *** CORRECCIÓN AQUÍ: Añadir await ***
+        const allUserData = await getAllUserData();
 
         if (!allUserData || Object.keys(allUserData).length === 0) {
-            console.log("[Millonarios Plugin] No hay datos de usuarios en allUserData.");
-            return message.reply("🏦 Aún no hay datos de usuarios para mostrar un ranking.");
+            console.log("[Millonarios Plugin] No hay datos de usuarios en allUserData (después de await).");
+            return message.reply("🏦 Aún no hay datos de usuarios para mostrar un ranking o la base de datos está vacía.");
         }
 
         const usersArray = [];
         for (const userId in allUserData) {
-            const userEntry = allUserData[userId]; // Datos directos de la copia en memoria
+            const userEntry = allUserData[userId];
 
-            // Log para cada usuario procesado
-            // console.log(`[Millonarios Plugin DEBUG] Procesando userId: ${userId}, pushname en allUserData: '${userEntry.pushname}'`);
-
-            // Asegurarse de que los campos de dinero existan y sean números
             const moneyInHand = (typeof userEntry.money === 'number' && !isNaN(userEntry.money)) ? userEntry.money : 0;
             const moneyInBank = (typeof userEntry.bank === 'number' && !isNaN(userEntry.bank)) ? userEntry.bank : 0;
             const totalMoney = moneyInHand + moneyInBank;
 
-            // Determinar el nombre a mostrar
             let displayName = "Usuario Desconocido";
             if (userEntry.pushname && typeof userEntry.pushname === 'string' && userEntry.pushname.trim() !== "") {
                 displayName = userEntry.pushname;
-            } else if (userId) { // Fallback al ID si no hay pushname válido
+            } else if (userId) {
                 displayName = userId.split('@')[0];
             }
             
-            // console.log(`[Millonarios Plugin DEBUG] Para ${userId} - displayName: '${displayName}', totalMoney: ${totalMoney}`);
-
             usersArray.push({
                 id: userId,
                 name: displayName,
@@ -51,7 +45,8 @@ module.exports = {
         const topUsers = usersArray.slice(0, 10);
 
         if (topUsers.length === 0) {
-            return message.reply("🏦 No hay usuarios con dinero para mostrar en el ranking.");
+            // Esto podría pasar si todos los usuarios tienen 0 dinero total
+            return message.reply("🏦 Ningún usuario tiene dinero para mostrar en el ranking en este momento.");
         }
 
         let rankingMessage = `🏆 *TOP MILLONARIOS DEL BOT* 🏆\n\n`;
@@ -69,23 +64,20 @@ module.exports = {
         rankingMessage += `-------------------------------------\n`;
 
         const requesterId = message.author || message.from;
-        // Obtener datos actualizados del solicitante para asegurar el pushname más reciente
         const requesterDataCurrent = await getUserData(requesterId, message); 
         const requesterRankIndex = usersArray.findIndex(u => u.id === requesterId);
 
-        if (requesterRankIndex !== -1) { // Si el solicitante está en el array general del ranking
-            const rankedRequesterData = usersArray[requesterRankIndex]; // Datos del array ordenado
-            const displayNameForRequester = requesterDataCurrent.pushname || rankedRequesterData.name; // Priorizar el pushname recién obtenido
-
-            if (requesterRankIndex < 10) { // Ya está en el top 10 mostrado
-                // rankingMessage += `\n(¡Estás en el Top 10!)`; // Opcional
-            } else { // No está en el top 10, pero sí en el ranking
-                rankingMessage += `\nTu posición: #${requesterRankIndex + 1} *${displayNameForRequester}* con ${MONEY_SYMBOL}${rankedRequesterData.totalMoney.toLocaleString('es-PE')}`;
+        if (requesterDataCurrent) { // Asegurarse que requesterDataCurrent no sea null
+            if (requesterRankIndex !== -1) {
+                const rankedRequesterData = usersArray[requesterRankIndex];
+                const displayNameForRequester = requesterDataCurrent.pushname || rankedRequesterData.name;
+                if (requesterRankIndex >= 10) { // Solo mostrar si no está en el top 10 ya visible
+                    rankingMessage += `\nTu posición: #${requesterRankIndex + 1} *${displayNameForRequester}* con ${MONEY_SYMBOL}${rankedRequesterData.totalMoney.toLocaleString('es-PE')}`;
+                }
+            } else {
+                 rankingMessage += `\n¡Sigue jugando, *${requesterDataCurrent.pushname || requesterId.split('@')[0]}*! Aún no tienes suficiente para el ranking.`;
             }
-        } else if (requesterDataCurrent) { // Si no está en el ranking pero tenemos sus datos (probablemente dinero 0)
-             rankingMessage += `\n¡Sigue jugando, *${requesterDataCurrent.pushname || requesterId.split('@')[0]}*! Aún no tienes suficiente para el ranking.`;
         }
-
 
         await message.reply(rankingMessage.trim());
         console.log("[Millonarios Plugin] Ranking enviado.");

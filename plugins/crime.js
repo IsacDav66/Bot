@@ -72,7 +72,7 @@ const execute = async (client, message, args) => {
         // Éxito
         const amountGained = Math.floor(Math.random() * (crime.maxReward - crime.minReward + 1)) + crime.minReward;
         user.money += amountGained;
-        await saveUserData();
+        await saveUserData(userId, user);
         console.log(`[Crime Plugin] ${userId} tuvo éxito en '${crime.description}', ganó ${amountGained}. Dinero: ${user.money}`);
         return message.reply(`*✅ ${crime.successMessage(amountGained)}*\nTu dinero: ${MONEY_SYMBOL}${user.money}`);
     } else {
@@ -82,7 +82,7 @@ const execute = async (client, message, args) => {
         penaltyAmount = Math.min(penaltyAmount, user.money); // No perder más de lo que se tiene en mano
 
         user.money -= penaltyAmount;
-        await saveUserData();
+        await saveUserData(userId, user);
         console.log(`[Crime Plugin] ${userId} falló en '${crime.description}', perdió ${penaltyAmount}. Dinero: ${user.money}`);
         let finalMessage = `*❌ ${crime.failureMessage(penaltyAmount)}*`;
         if (user.money < 0) user.money = 0; // Evitar dinero negativo (aunque la lógica de penaltyAmount ya debería prevenirlo)

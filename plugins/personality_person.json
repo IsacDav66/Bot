@@ -784,9 +784,24 @@
                 "trait": "Tiene autoridad o poder de decisión sobre la asignación de privilegios de administrador.",
                 "sourceMessageSnippet": "No te lo iban a dar, deje la regla de que no den admin a nadie",
                 "timestamp": "2025-05-24T03:55:23.118Z"
+            },
+            {
+                "trait": "Está probando una base de datos.",
+                "sourceMessageSnippet": "Es base de prueba sus datos aun están bien",
+                "timestamp": "2025-05-25T15:31:17.220Z"
+            },
+            {
+                "trait": "Está realizando tareas de mantenimiento.",
+                "sourceMessageSnippet": "Q ando en mantenimiento ash",
+                "timestamp": "2025-05-25T15:32:10.505Z"
+            },
+            {
+                "trait": "Trabaja con bases de datos.",
+                "sourceMessageSnippet": "Lo subo a una base de datos",
+                "timestamp": "2025-05-25T15:32:21.630Z"
             }
         ],
-        "lastPassiveAnalysisTimestamp": "2025-05-24T03:55:23.118Z"
+        "lastPassiveAnalysisTimestamp": "2025-05-25T15:32:21.630Z"
     },
     "43508639514868@lid": {
         "name": "Leónidas 😢🇧🇷",
@@ -1526,9 +1541,19 @@
                 "trait": "Se sentía agotado y triste.",
                 "sourceMessageSnippet": "Y estaba llorando, agotado y cansado de todo",
                 "timestamp": "2025-05-24T04:27:32.421Z"
+            },
+            {
+                "trait": "Tuvo 3000 pesos y ya no los tiene.",
+                "sourceMessageSnippet": "TENIA 3000 PESOS QUE PASO???",
+                "timestamp": "2025-05-25T15:31:08.777Z"
+            },
+            {
+                "trait": "Tiene aproximadamente 3000 amigos.",
+                "sourceMessageSnippet": "Mis 3k amigo...",
+                "timestamp": "2025-05-25T15:31:26.298Z"
             }
         ],
-        "lastPassiveAnalysisTimestamp": "2025-05-24T04:27:32.421Z"
+        "lastPassiveAnalysisTimestamp": "2025-05-25T15:31:26.298Z"
     },
     "76253252030557@lid": {
         "name": "mai",

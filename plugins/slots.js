@@ -232,7 +232,7 @@ const execute = async (client, message, args, commandName) => {
 
     user.money -= betAmount;
     user.lastslots = now;
-    await saveUserData();
+    await saveUserData(userId, user);
 
     const { reelsResultSymbols, paylineResultEmojis } = spinReels();
     const { amount: winnings, description: winDesc } = calculateWinnings(paylineResultEmojis, betAmount);
@@ -246,7 +246,7 @@ const execute = async (client, message, args, commandName) => {
     }
     
     user.money = Math.max(0, user.money);
-    await saveUserData();
+    await saveUserData(userId, user);
 
     resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money}`;
     console.log(`[Slots Plugin] Usuario ${userId} (${user.pushname || 'N/A'}) apostó ${betAmount}. Línea: ${paylineResultEmojis.join('')}. Ganó: ${winnings}. Dinero final: ${user.money}`);

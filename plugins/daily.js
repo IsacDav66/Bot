@@ -91,7 +91,7 @@ const execute = async (client, message, args, commandName) => {
     user.exp += expEarned;
     user.lastdaily = now; // Actualizar el timestamp de la última reclamación
 
-    await saveUserData(); // Guardar todos los cambios
+    await saveUserData(userId, user); // Guardar todos los cambios
 
     let replyMessage = `🎉 ¡Recompensa Diaria Reclamada por *${user.pushname || 'ti'}*! 🎉\n\n` +
                        ` Streak Actual: 🔥 *${currentStreak} día(s)* (Multiplicador: x${streakMultiplier.toFixed(2)})\n\n` +

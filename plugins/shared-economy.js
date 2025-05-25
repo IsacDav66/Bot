@@ -1,173 +1,224 @@
 // plugins/shared-economy.js
+// Manejo de datos de economía usando SQLite como backend principal.
+
 const fs = require('fs').promises;
 const path = require('path');
+const sqlite3 = require('sqlite3').verbose(); // Asegúrate de haber hecho 'npm install sqlite3'
 
-// console.log(`[Shared Economy CORE] Módulo shared-economy.js EJECUTÁNDOSE - Timestamp: ${Date.now()}`);
+const JSON_BACKUP_PATH = path.join(__dirname, '..', 'userData.json'); // Para backup/importación inicial
+const DB_PATH = path.join(__dirname, '..', 'bot_database.sqlite'); // Ruta a tu archivo de base de datos SQLite
 
-const userDataPath = path.join(__dirname, '..', 'userData.json');
-let userData = {};
+// Campos por defecto para un nuevo usuario o para migración
+const DEFAULT_USER_FIELDS = {
+    exp: 0, money: 0, bank: 0,
+    lastwork: 0, laststeal: 0, lastcrime: 0, lastslut: 0,
+    lastroulette: 0, lastslots: 0, lastdaily: 0, dailystreak: 0,
+    pushname: null
+};
+const ALL_USER_FIELDS_ORDERED = [ // El orden importa para las sentencias SQL
+    'userId', 'exp', 'money', 'bank',
+    'lastwork', 'laststeal', 'lastcrime', 'lastslut',
+    'lastroulette', 'lastslots', 'lastdaily', 'dailystreak',
+    'pushname'
+];
 
-async function loadUserData() {
-    try {
-        const fileContent = await fs.readFile(userDataPath, 'utf8');
-        const loadedFromFile = JSON.parse(fileContent);
-        console.log('[Shared Economy] Datos de usuario cargados desde userData.json');
 
-        let needsSaveAfterMigration = false;
-        for (const userId in loadedFromFile) {
-            const userEntry = loadedFromFile[userId];
+// Conectar a la base de datos (o crearla si no existe)
+const db = new sqlite3.Database(DB_PATH, (err) => {
+    if (err) {
+        console.error("[SQLite] Error al conectar/crear la base de datos:", err.message);
+        // Considerar terminar el proceso si la BD es crítica y no se puede abrir
+        // process.exit(1); 
+    } else {
+        console.log("[SQLite] Conectado exitosamente a la base de datos SQLite:", DB_PATH);
+        initializeDatabase(); // Crear tabla y migrar si es necesario
+    }
+});
 
-            if (userEntry.hasOwnProperty('stars') && !userEntry.hasOwnProperty('money')) {
-                userEntry.money = userEntry.stars;
-                delete userEntry.stars;
-                needsSaveAfterMigration = true;
+// Función para inicializar la tabla y migrar desde JSON si es necesario
+async function initializeDatabase() {
+    const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS users (
+            userId TEXT PRIMARY KEY,
+            exp INTEGER DEFAULT 0,
+            money INTEGER DEFAULT 0,
+            bank INTEGER DEFAULT 0,
+            lastwork INTEGER DEFAULT 0,
+            laststeal INTEGER DEFAULT 0,
+            lastcrime INTEGER DEFAULT 0,
+            lastslut INTEGER DEFAULT 0,
+            lastroulette INTEGER DEFAULT 0,
+            lastslots INTEGER DEFAULT 0,
+            lastdaily INTEGER DEFAULT 0,
+            dailystreak INTEGER DEFAULT 0,
+            pushname TEXT
+        );`;
+
+    db.run(createTableSQL, async (err) => {
+        if (err) {
+            return console.error("[SQLite] Error creando tabla 'users':", err.message);
+        }
+        console.log("[SQLite] Tabla 'users' asegurada/creada.");
+
+        // Verificar si la tabla está vacía para posible importación desde JSON
+        db.get("SELECT COUNT(*) as count FROM users", async (err, row) => {
+            if (err) {
+                return console.error("[SQLite] Error contando usuarios en la BD:", err.message);
             }
 
-            const fieldsToInitialize = {
-                exp: 0, money: 0, bank: 0,
-                lastwork: 0, laststeal: 0, lastcrime: 0, lastslut: 0,
-                lastroulette: 0, lastslots: 0, lastdaily: 0, dailystreak: 0
-            };
-
-            for (const field in fieldsToInitialize) {
-                if (!userEntry.hasOwnProperty(field) || typeof userEntry[field] !== 'number' || isNaN(userEntry[field])) {
-                    userEntry[field] = fieldsToInitialize[field];
-                    needsSaveAfterMigration = true;
+            if (row.count === 0) {
+                console.log("[SQLite] Tabla 'users' está vacía. Intentando importar desde:", JSON_BACKUP_PATH);
+                try {
+                    await fs.access(JSON_BACKUP_PATH); // Verifica si el archivo existe
+                    const fileContent = await fs.readFile(JSON_BACKUP_PATH, 'utf8');
+                    const jsonData = JSON.parse(fileContent);
+                    
+                    if (Object.keys(jsonData).length > 0) {
+                        const stmt = db.prepare(`
+                            INSERT OR IGNORE INTO users 
+                            (userId, exp, money, bank, lastwork, laststeal, lastcrime, lastslut, lastroulette, lastslots, lastdaily, dailystreak, pushname) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        `);
+                        
+                        let importedCount = 0;
+                        db.serialize(() => { // Usar serialize para asegurar orden en transacciones
+                            db.run("BEGIN TRANSACTION;");
+                            for (const userId in jsonData) {
+                                const jsonEntry = jsonData[userId];
+                                // Combinar con defaults para asegurar todos los campos, priorizando los del JSON
+                                const userEntry = { ...DEFAULT_USER_FIELDS, ...jsonEntry }; 
+                                stmt.run(
+                                    userId, userEntry.exp, userEntry.money, userEntry.bank,
+                                    userEntry.lastwork, userEntry.laststeal, userEntry.lastcrime, userEntry.lastslut,
+                                    userEntry.lastroulette, userEntry.lastslots, userEntry.lastdaily, userEntry.dailystreak,
+                                    userEntry.pushname
+                                );
+                                importedCount++;
+                            }
+                            stmt.finalize((finalizeErr) => {
+                                if (finalizeErr) {
+                                    console.error("[SQLite] Error finalizando statement de importación:", finalizeErr.message);
+                                    db.run("ROLLBACK;");
+                                } else {
+                                    db.run("COMMIT;", (commitErr) => {
+                                        if (commitErr) {
+                                            console.error("[SQLite] Error haciendo COMMIT de la importación:", commitErr.message);
+                                        } else {
+                                            console.log(`[SQLite] ${importedCount} usuarios importados desde userData.json y commiteados.`);
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                    } else {
+                        console.log("[SQLite] userData.json está vacío. No se importaron datos.");
+                    }
+                } catch (e) {
+                    if (e.code === 'ENOENT') {
+                        console.log("[SQLite] userData.json no encontrado para importación inicial. Se comenzará con base de datos vacía.");
+                    } else {
+                        console.error("[SQLite] Error leyendo, parseando o importando desde userData.json:", e.message);
+                    }
                 }
+            } else {
+                console.log(`[SQLite] Tabla 'users' ya contiene ${row.count} usuarios. No se importará desde JSON.`);
             }
-            
-            if (!userEntry.hasOwnProperty('pushname')) {
-                userEntry.pushname = null;
-                needsSaveAfterMigration = true;
-            }
-            if (!userEntry.hasOwnProperty('bank')) userEntry.bank = 0;
-            if (typeof userEntry.bank !== 'number' || isNaN(userEntry.bank)) userEntry.bank = 0;
-
-            if (!userEntry.hasOwnProperty('lastwork')) userEntry.lastwork = 0;
-            if (typeof userEntry.lastwork !== 'number') userEntry.lastwork = 0;
-
-            if (!userEntry.hasOwnProperty('laststeal')) userEntry.laststeal = 0;
-            if (typeof userEntry.laststeal !== 'number') userEntry.laststeal = 0;
-            
-            if (!userEntry.hasOwnProperty('lastcrime')) userEntry.lastcrime = 0;
-            if (typeof userEntry.lastcrime !== 'number') userEntry.lastcrime = 0;
-
-            if (!userEntry.hasOwnProperty('lastslut')) userEntry.lastslut = 0;
-            if (typeof userEntry.lastslut !== 'number') userEntry.lastslut = 0;
-            
-            if (!userEntry.hasOwnProperty('lastroulette')) userEntry.lastroulette = 0; // Para el plugin de ruleta
-            if (typeof userEntry.lastroulette !== 'number') userEntry.lastroulette = 0;
-
-            if (!userEntry.hasOwnProperty('lastslots')) userEntry.lastslots = 0; // Para el plugin de slots
-            if (typeof userEntry.lastslots !== 'number') userEntry.lastslots = 0;
-            
-            if (!userEntry.hasOwnProperty('exp')) userEntry.exp = 0; // Asegurar que exp exista y sea numérico
-            if (typeof userEntry.exp !== 'number' || isNaN(userEntry.exp)) userEntry.exp = 0;
-            if (!userEntry.hasOwnProperty('lastdaily')) userEntry.lastdaily = 0;
-            if (typeof userEntry.lastdaily !== 'number' || isNaN(userEntry.lastdaily)) userEntry.lastdaily = 0;
-
-            if (!userEntry.hasOwnProperty('dailystreak')) userEntry.dailystreak = 0;
-            if (typeof userEntry.dailystreak !== 'number' || isNaN(userEntry.dailystreak)) userEntry.dailystreak = 0;
-        }
-
-        userData = loadedFromFile;
-
-        if (needsSaveAfterMigration) {
-            console.log('[Shared Economy] Migraciones/inicializaciones aplicadas durante la carga. Guardando datos actualizados...');
-            await saveUserData();
-        }
-
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.log('[Shared Economy] userData.json no encontrado. Se creará uno nuevo cuando se guarden datos.');
-            userData = {};
-        } else {
-            console.error('[Shared Economy] Error crítico cargando userData.json:', error);
-            userData = {};
-        }
-    }
-}
-
-async function saveUserData() {
-    try {
-        await fs.writeFile(userDataPath, JSON.stringify(userData, null, 2));
-        // console.log('[Shared Economy] Datos de usuario guardados en userData.json.');
-    } catch (error) {
-        console.error('[Shared Economy] Error guardando userData.json:', error);
-    }
-}
-
-loadUserData();
-
-async function getUserData(userId, source = null) {
-    let userEntry = userData[userId];
-    let isNewUser = false;
-    let pushnameUpdatedThisCall = false; // Para rastrear si el pushname se actualizó en ESTA llamada
-
-    if (!userEntry) {
-        isNewUser = true;
-        userEntry = {
-            exp: 0, money: 0, bank: 0,
-            lastwork: 0, laststeal: 0, lastcrime: 0, lastslut: 0,
-            lastroulette: 0, lastslots: 0, lastdaily: 0, dailystreak: 0,
-            pushname: null
-        };
-        userData[userId] = userEntry;
-    }
-
-    const fieldsToValidate = ['exp', 'money', 'bank', 'lastwork', 'laststeal', 'lastcrime', 'lastslut', 'lastroulette', 'lastslots', 'lastdaily', 'dailystreak'];
-    fieldsToValidate.forEach(field => {
-        if (typeof userEntry[field] !== 'number' || isNaN(userEntry[field])) {
-            userEntry[field] = 0;
-        }
+        });
     });
-
-    if (source) {
-        let contactToUse = null;
-        try {
-            if (typeof source.getContact === 'function') { // Si 'source' es un objeto 'message'
-                contactToUse = await source.getContact();
-            } else if (source.id && (source.pushname !== undefined || source.name !== undefined || source.number !== undefined)) { // Si 'source' es un objeto 'contactInfo'
-                contactToUse = source;
-            }
-
-            if (contactToUse) {
-                let currentName = null;
-                if (contactToUse.pushname) {
-                    currentName = contactToUse.pushname;
-                } else if (contactToUse.name) {
-                    currentName = contactToUse.name;
-                } else if (contactToUse.number) { // Usar número como último recurso si no hay otro nombre
-                    currentName = contactToUse.number;
-                }
-
-                if (currentName && userEntry.pushname !== currentName) {
-                    userEntry.pushname = currentName;
-                    pushnameUpdatedThisCall = true;
-                    console.log(`[Shared Economy] Pushname para ${userId} actualizado/guardado a: ${userEntry.pushname}`);
-                } else if (currentName && !userEntry.pushname) { // Si no había pushname y ahora sí
-                    userEntry.pushname = currentName;
-                    pushnameUpdatedThisCall = true;
-                    console.log(`[Shared Economy] Pushname para ${userId} guardado por primera vez: ${userEntry.pushname}`);
-                }
-            }
-        } catch (error) {
-            console.error(`[Shared Economy] Error obteniendo/usando contacto desde 'source' para ${userId}:`, error.message);
-        }
-    }
-    
-    // Opcional: Guardar inmediatamente si el pushname fue actualizado EN ESTA LLAMADA.
-    // Esto es más específico que guardarlo siempre.
-    // if (pushnameUpdatedThisCall) {
-    //     console.log(`[Shared Economy] Pushname fue actualizado para ${userId}, guardando datos...`);
-    //     await saveUserData();
-    // }
-
-    return userEntry;
 }
 
-function getAllUserData() {
-    return userData;
+// getUserData ahora lee de SQLite
+async function getUserData(userId, source = null) {
+    return new Promise((resolve, reject) => {
+        db.get("SELECT * FROM users WHERE userId = ?", [userId], async (err, row) => {
+            if (err) {
+                console.error(`[SQLite GetUser] Error obteniendo usuario ${userId}:`, err.message);
+                return reject(err); // Rechazar la promesa en caso de error de BD
+            }
+
+            let userEntry;
+            let isNewInDb = false; // Para saber si debemos insertar o actualizar en saveUserData
+
+            if (row) {
+                userEntry = { ...DEFAULT_USER_FIELDS, ...row }; // Combinar con defaults para asegurar todos los campos
+            } else {
+                isNewInDb = true;
+                userEntry = { userId, ...DEFAULT_USER_FIELDS };
+            }
+
+            let pushnameWasUpdated = false;
+            if (source) {
+                let contactToUse = null;
+                try {
+                    if (typeof source.getContact === 'function') {
+                        contactToUse = await source.getContact();
+                    } else if (source.id && (source.pushname !== undefined || source.name !== undefined || source.number !== undefined)) {
+                        contactToUse = source;
+                    }
+
+                    if (contactToUse) {
+                        let currentName = contactToUse.pushname || contactToUse.name || contactToUse.number;
+                        if (currentName && userEntry.pushname !== currentName) {
+                            userEntry.pushname = currentName;
+                            pushnameWasUpdated = true; // Marcar para posible guardado inmediato
+                            console.log(`[SQLite GetUser] Pushname para ${userId} será actualizado a: ${userEntry.pushname}`);
+                        }
+                    }
+                } catch (contactError) {
+                    console.error(`[SQLite GetUser] Error obteniendo info de contacto para ${userId} desde source:`, contactError.message);
+                }
+            }
+            
+            // Si es un usuario completamente nuevo para la BD o su pushname se actualizó,
+            // y queremos persistir este cambio inmediatamente (antes de una operación económica).
+            if (isNewInDb || pushnameWasUpdated) {
+                 // console.log(`[SQLite GetUser] Usuario ${userId} es nuevo o pushname actualizado. Guardando entrada inicial/actualizada...`);
+                 // await saveUserData(userId, userEntry); // Podría causar un guardado extra si el plugin también llama a saveUserData
+                 // Es mejor que el plugin que modifica datos sea el responsable de llamar a saveUserData.
+                 // La entrada se creará/actualizará en la BD cuando saveUserData sea llamado por el plugin.
+            }
+            resolve(userEntry);
+        });
+    });
+}
+
+// saveUserData ahora escribe/actualiza en SQLite
+async function saveUserData(userId, userObject) {
+    return new Promise((resolve, reject) => {
+        const dataToSave = { userId, ...DEFAULT_USER_FIELDS, ...userObject }; // Incluir userId y asegurar todos los campos
+
+        const fieldsForSQL = ALL_USER_FIELDS_ORDERED.join(', ');
+        const placeholders = ALL_USER_FIELDS_ORDERED.map(() => '?').join(', ');
+        const values = ALL_USER_FIELDS_ORDERED.map(field => dataToSave[field]);
+
+        const stmtSQL = `INSERT OR REPLACE INTO users (${fieldsForSQL}) VALUES (${placeholders})`;
+        
+        db.run(stmtSQL, values, function(err) {
+            if (err) {
+                console.error(`[SQLite SaveUser] Error guardando datos para ${userId}:`, err.message);
+                return reject(err);
+            }
+            // console.log(`[SQLite SaveUser] Datos guardados para ${userId}. Filas afectadas: ${this.changes}`);
+            resolve();
+        });
+    });
+}
+
+// getAllUserData ahora lee de SQLite
+async function getAllUserData() {
+    return new Promise((resolve, reject) => {
+        db.all("SELECT * FROM users", [], (err, rows) => {
+            if (err) {
+                console.error("[SQLite GetAllUsers] Error obteniendo todos los usuarios:", err.message);
+                return reject(err); // Rechazar la promesa
+            }
+            const allUsersObject = {};
+            rows.forEach(row => {
+                allUsersObject[row.userId] = { ...DEFAULT_USER_FIELDS, ...row }; // Combinar con defaults
+            });
+            resolve(allUsersObject);
+        });
+    });
 }
 
 function msToTime(duration) {
@@ -190,7 +241,7 @@ function pickRandom(list) {
 module.exports = {
     getUserData,
     saveUserData,
+    getAllUserData,
     msToTime,
     pickRandom,
-    getAllUserData,
 };

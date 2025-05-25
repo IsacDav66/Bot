@@ -169,7 +169,7 @@ const execute = async (client, message, args, commandName) => {
 
     user.money -= betAmount;
     user.lastroulette = now;
-    await saveUserData();
+    await saveUserData(userId, user);
 
     await message.reply(`*💸 ${message.pushName || 'Tú'} apuestas ${MONEY_SYMBOL}${betAmount} en ${betType}.*\nGirando la ruleta... 🎡`);
     await new Promise(resolve => setTimeout(resolve, 1500)); // Menor espera si la imagen se genera rápido
@@ -191,7 +191,7 @@ const execute = async (client, message, args, commandName) => {
         resultMessage += `*😥 ¡Mala suerte! Has perdido tu apuesta de ${MONEY_SYMBOL}${betAmount}.*`;
     }
     user.money = Math.max(0, user.money);
-    await saveUserData();
+    await saveUserData(userId, user);
     resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money}`;
     console.log(`[Roulette Plugin] Usuario ${userId} apostó ${betAmount} en ${betType}. Resultado: ${winningNumber} ${winningColor}. Ganó: ${won}. Dinero final: ${user.money}`);
 

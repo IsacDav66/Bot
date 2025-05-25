@@ -70,8 +70,7 @@ const execute = async (client, message, args, commandName) => {
     
     user.money += earnedAmount;
     user.lastwork = now;
-    await saveUserData(); // saveUserData usa el 'userData' global que 'user' referencia
-
+    await saveUserData(userId, user); // Pasa el ID y el objeto de usuario modificado
     const caption = `*🏢 ${job.text}*\n\n` +
                     `✨ *EXP Ganada:* ${earnedExp}\n` +
                     `💵 *Dinero Ganado:* ${MONEY_SYMBOL}${earnedAmount}\n\n` +
