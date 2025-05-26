@@ -5,3 +5,6 @@ node_modules
 userData.json
 bot_database.sqlite
 personality_person.json
+bodas.json
+general_memories.json
+user_memories.json
