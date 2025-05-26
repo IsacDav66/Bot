@@ -1,13 +1,14 @@
 // plugins/slots.js
-// Juego de Tragamonedas (Slot Machine)
+// Juego de Tragamonedas (Slot Machine) con verificación de registro.
 
 const path = require('path');
 const { MessageMedia } = require('whatsapp-web.js');
 const { createCanvas, registerFont } = require('canvas');
-const { getUserData, saveUserData, msToTime } = require('./shared-economy');
+const { getUserData, saveUserData, msToTime, pickRandom, setUserRegistrationState, clearUserRegistrationState } = require('./shared-economy');
 
 const MONEY_SYMBOL = '$';
-const COOLDOWN_SLOTS_MS = 30 * 1000; // Puedes ponerlo a 0 para pruebas rápidas
+const EXP_SYMBOL = '⭐'; // Aunque no se usa directamente aquí, por consistencia si lo añades
+const COOLDOWN_SLOTS_MS = 30 * 1000; // 30 segundos
 
 const NUM_REELS = 3;
 const SYMBOLS_VISIBLE_PER_REEL = 3;
@@ -38,7 +39,7 @@ try {
         registerFont(fontPath, { family: FONT_FAMILY_EMOJI });
         console.log(`[Slots Plugin] Fuente ${FONT_FAMILY_EMOJI} registrada desde ${fontPath}`);
     } else {
-        console.warn(`[Slots Plugin] ADVERTENCIA: Archivo de fuente no encontrado en ${fontPath}. Los emojis podrían no renderizarse a color.`);
+        console.warn(`[Slots Plugin] ADVERTENCIA: Archivo de fuente no encontrado en ${fontPath}.`);
     }
 } catch (fontError) {
     console.warn(`[Slots Plugin] ADVERTENCIA: No se pudo registrar la fuente ${FONT_FAMILY_EMOJI}.`, fontError.message);
@@ -52,6 +53,8 @@ function ensureLastSlots(user) {
 }
 
 async function generateSlotsImage(reelsResultSymbols) {
+    // ... (código de generateSlotsImage como en tu última versión, con la corrección de fillStyle si es necesario)
+    // (Para brevedad, no lo repito aquí, asumo que es la versión que te funcionaba visualmente)
     const symbolSize = 80;
     const reelPaddingVertical = 15;
     const symbolVisibleHeight = symbolSize + (reelPaddingVertical * 2);
@@ -105,7 +108,6 @@ async function generateSlotsImage(reelsResultSymbols) {
                     bgColorAlpha = parseFloat(rgbaParts[3]);
                 }
                 ctx.globalAlpha = isNaN(bgColorAlpha) ? 0.7 : bgColorAlpha;
-
                 ctx.fillStyle = symbolData.bgColor;
                 const bgRadius = symbolSize / 2 * 1.1;
                 ctx.beginPath();
@@ -122,10 +124,10 @@ async function generateSlotsImage(reelsResultSymbols) {
                                        // Si la fuente NO tiene color, se dibujará negro.
             
             ctx.fillText(symbolData.emoji, symbolXCenter, symbolYCenter);
-            // No dibujar múltiples veces por ahora, hasta ver el efecto de fillStyle
+            ctx.fillText(symbolData.emoji, symbolXCenter, symbolYCenter); // Dibujar dos veces si ayuda con la opacidad
         }
     }
-
+    // ... (resto del dibujo de la línea de pago, etc., como antes) ...
     ctx.globalAlpha = 1.0;
     const paylineY = canvasPaddingVertical + (Math.floor(SYMBOLS_VISIBLE_PER_REEL / 2) * symbolVisibleHeight) + symbolVisibleHeight / 2;
     ctx.strokeStyle = 'red';
@@ -134,7 +136,6 @@ async function generateSlotsImage(reelsResultSymbols) {
     ctx.moveTo(canvasPaddingHorizontal / 2, paylineY);
     ctx.lineTo(canvasWidth - (canvasPaddingHorizontal / 2), paylineY);
     ctx.stroke();
-    
     const arrowSize = 10;
     ctx.fillStyle = 'red';
     ctx.beginPath();
@@ -143,22 +144,17 @@ async function generateSlotsImage(reelsResultSymbols) {
     ctx.lineTo(canvasPaddingHorizontal / 2 + arrowSize, paylineY + arrowSize / 2);
     ctx.closePath();
     ctx.fill();
-
     ctx.beginPath();
     ctx.moveTo(canvasWidth - (canvasPaddingHorizontal / 2), paylineY);
     ctx.lineTo(canvasWidth - (canvasPaddingHorizontal / 2) - arrowSize, paylineY - arrowSize / 2);
     ctx.lineTo(canvasWidth - (canvasPaddingHorizontal / 2) - arrowSize, paylineY + arrowSize / 2);
     ctx.closePath();
     ctx.fill();
-
     return canvas.toBuffer('image/png');
 }
 
-// ... (resto de spinReels, calculateWinnings, execute, module.exports SIN CAMBIOS respecto a la última versión completa que te di)
-// Solo la función generateSlotsImage ha sido modificada como se muestra arriba.
-// Asegúrate de que las llamadas a getUserData en execute usen 'await' y pasen 'message'.
 
-function spinReels() {
+function spinReels() { /* ... (como antes) ... */ 
     const reelsResultSymbols = [];
     const paylineResultEmojis = [];
     for (let i = 0; i < NUM_REELS; i++) {
@@ -174,7 +170,7 @@ function spinReels() {
     return { reelsResultSymbols, paylineResultEmojis };
 }
 
-function calculateWinnings(paylineEmojis, betAmount) {
+function calculateWinnings(paylineEmojis, betAmount) { /* ... (como antes) ... */
     const paylineIds = paylineEmojis.map(emoji => slotSymbolsConfig.find(s => s.emoji === emoji)?.id);
     let multiplier = 0;
     let winDesc = "";
@@ -183,35 +179,96 @@ function calculateWinnings(paylineEmojis, betAmount) {
         const symbolConfig = slotSymbolsConfig.find(s => s.id === paylineIds[0]);
         if (symbolConfig && symbolConfig.payout['3']) {
             multiplier = symbolConfig.payout['3'];
-            winDesc = `3 x ${symbolConfig.emoji}`; // Usar emoji de la config para descripción
+            winDesc = `3 x ${symbolConfig.emoji}`;
             return { amount: betAmount * multiplier, description: winDesc };
         }
     }
-
     const cherryConfig = slotSymbolsConfig.find(s => s.id === 'cherry');
     if (cherryConfig && cherryConfig.payout['2']) {
         const cherryCount = paylineIds.filter(id => id === 'cherry').length;
         if (cherryCount === 2 && multiplier === 0) { 
             multiplier = cherryConfig.payout['2'];
-            winDesc = `2 x ${cherryConfig.emoji}`; // Usar emoji de la config para descripción
+            winDesc = `2 x ${cherryConfig.emoji}`;
         }
     }
     return { amount: betAmount * multiplier, description: winDesc };
 }
 
 const execute = async (client, message, args, commandName) => {
-    const userId = message.author || message.from;
-    const user = await getUserData(userId, message); 
-    
+    // --- INICIO Bloque de Verificación de Registro ---
+    const senderContact = await message.getContact();
+    if (!senderContact) {
+        console.error(`[Slots Plugin] No se pudo obtener el contacto del remitente.`);
+        try { await message.reply("❌ No pude identificarte. Inténtalo de nuevo."); } catch(e) { console.error(`[Slots Plugin] Error enviando reply de no identificación:`, e); }
+        return;
+    }
+    const commandSenderId = senderContact.id._serialized; 
+    const user = await getUserData(commandSenderId, message); 
+
     if (!user) {
-        console.error(`[Slots Plugin] No se pudieron obtener los datos del usuario para ${userId}`);
-        return message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo.");
+        console.error(`[Slots Plugin] No se pudieron obtener los datos del usuario para ${commandSenderId}`);
+        try { await message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo."); } catch(e) { console.error(`[Slots Plugin] Error enviando reply de error de datos:`, e); }
+        return;
     }
 
+    if (!user.password) {
+        const currentChat = await message.getChat();
+        if (!currentChat.isGroup) {
+            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.slots`) en un chat grupal para configurar tu número y contraseña.");
+            return;
+        }
+        const userNameToMention = user.pushname || commandSenderId.split('@')[0];
+        if (!user.phoneNumber) {
+            user.registration_state = 'esperando_numero_telefono';
+            await saveUserData(commandSenderId, user); 
+            console.log(`[Slots Plugin] Usuario ${commandSenderId} (${userNameToMention}) no tiene contraseña ni teléfono. Solicitando número. Estado: esperando_numero_telefono.`);
+            const currentPrefix = message.body.charAt(0);
+            await message.reply(
+                `👋 ¡Hola @${userNameToMention}!\n\n` +
+                `Para usar las funciones de economía, primero necesitamos registrar tu número de teléfono.\n\n` +
+                `Por favor, responde en ESTE CHAT GRUPAL con el comando:\n` +
+                `*${currentPrefix}mifono +TUNUMEROCOMPLETO*\n` +
+                `(Ej: ${currentPrefix}mifono +11234567890)\n\n` +
+                `Tu nombre de perfil actual es: *${user.pushname || 'No detectado'}*.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            return;
+        } else {
+            const dmChatIdForPassword = `${user.phoneNumber}@c.us`;
+            let userStateTarget = await getUserData(dmChatIdForPassword); 
+            userStateTarget.registration_state = 'esperando_contraseña_dm';
+            await saveUserData(dmChatIdForPassword, userStateTarget); 
+            console.log(`[Slots Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+            let displayPhoneNumber = user.phoneNumber;
+            if (user.phoneNumber && !String(user.phoneNumber).startsWith('+')) {
+                displayPhoneNumber = `+${user.phoneNumber}`;
+            }
+            await message.reply(
+                `🛡️ ¡Hola @${userNameToMention}!\n\n` +
+                `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            try {
+                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
+                console.log(`[Slots Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+            } catch(dmError){
+                console.error(`[Slots Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Slots Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+            }
+            return; 
+        }
+    }
+    // --- FIN Bloque de Verificación de Registro ---
+
+    // --- Lógica Específica del Comando .slots (si el usuario ya está registrado) ---
+    console.log(`[Slots Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) está registrado. Ejecutando comando slots.`);
     ensureLastSlots(user);
     const now = Date.now();
-
     const timeSinceLastSlots = now - (user.lastslots || 0);
+
     if (timeSinceLastSlots < COOLDOWN_SLOTS_MS) {
         const timeLeft = COOLDOWN_SLOTS_MS - timeSinceLastSlots;
         return message.reply(`*🎰 El tragamonedas está caliente. Espera ${msToTime(timeLeft)}.*`);
@@ -232,24 +289,25 @@ const execute = async (client, message, args, commandName) => {
 
     user.money -= betAmount;
     user.lastslots = now;
-    await saveUserData(userId, user);
+    await saveUserData(commandSenderId, user); // Guardar apuesta y cooldown
 
     const { reelsResultSymbols, paylineResultEmojis } = spinReels();
     const { amount: winnings, description: winDesc } = calculateWinnings(paylineResultEmojis, betAmount);
 
     let resultMessage = "";
     if (winnings > 0) {
-        user.money += winnings;
-        resultMessage = `*🎉 ¡GANASTE ${MONEY_SYMBOL}${winnings}! 🎉*\nCon ${winDesc}.`;
+        if (typeof user.money !== 'number' || isNaN(user.money)) user.money = 0; // Por si acaso
+        user.money += winnings; // Sumar ganancias (winnings ya incluye la apuesta devuelta si el multiplicador es >1)
+        resultMessage = `*🎉 ¡GANASTE ${MONEY_SYMBOL}${winnings.toLocaleString()}! 🎉*\nCon ${winDesc}.`;
     } else {
         resultMessage = `*😥 Suerte para la próxima...*`;
     }
     
-    user.money = Math.max(0, user.money);
-    await saveUserData(userId, user);
+    user.money = Math.max(0, user.money); // Asegurar que no sea negativo
+    await saveUserData(commandSenderId, user); // Guardar el resultado final del dinero
 
-    resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money}`;
-    console.log(`[Slots Plugin] Usuario ${userId} (${user.pushname || 'N/A'}) apostó ${betAmount}. Línea: ${paylineResultEmojis.join('')}. Ganó: ${winnings}. Dinero final: ${user.money}`);
+    resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money.toLocaleString()}`;
+    console.log(`[Slots Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) apostó ${betAmount}. Línea: ${paylineResultEmojis.join('')}. Ganó: ${winnings}. Dinero final: ${user.money}`);
 
     try {
         const imageBuffer = await generateSlotsImage(reelsResultSymbols);
@@ -265,6 +323,6 @@ module.exports = {
     name: 'Tragamonedas',
     aliases: ['slots', 'slot', 'tragamonedas', 'tragaperras'],
     description: 'Juega al tragamonedas y prueba tu suerte.',
-    category: 'Juegos',
+    category: 'Juegos', // O 'Economía'
     execute,
 };

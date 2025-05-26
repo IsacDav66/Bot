@@ -256,9 +256,19 @@
                 "trait": "Se siente excluido de algo.",
                 "sourceMessageSnippet": "Por q yo nunca aparezco en nada de eso JAJAJAJA",
                 "timestamp": "2025-05-24T00:09:53.655Z"
+            },
+            {
+                "trait": "El usuario está frustrado porque alguien llamado Zero solo tiene 3 dólares después de mucho esfuerzo.",
+                "sourceMessageSnippet": "Tanto esfuerzo, y Zero tiene $3?",
+                "timestamp": "2025-05-25T23:17:56.386Z"
+            },
+            {
+                "trait": "Tiene una conversación pendiente con el usuario @1658008416509.",
+                "sourceMessageSnippet": "@1658008416509 tenemos una conversación pendiente ahora",
+                "timestamp": "2025-05-26T01:17:31.104Z"
             }
         ],
-        "lastPassiveAnalysisTimestamp": "2025-05-24T00:09:53.655Z"
+        "lastPassiveAnalysisTimestamp": "2025-05-26T01:17:31.113Z"
     },
     "15522129289370@lid": {
         "name": "ƛƝƬƲӇƛƝ",
@@ -799,9 +809,14 @@
                 "trait": "Trabaja con bases de datos.",
                 "sourceMessageSnippet": "Lo subo a una base de datos",
                 "timestamp": "2025-05-25T15:32:21.630Z"
+            },
+            {
+                "trait": "Tiene un bot cuyas ganancias están almacenadas en la nube y está probando una versión en su PC.",
+                "sourceMessageSnippet": "Sus ganancias del bot están en la nube, ahora están viendo la versión ...",
+                "timestamp": "2025-05-25T23:25:09.478Z"
             }
         ],
-        "lastPassiveAnalysisTimestamp": "2025-05-25T15:32:21.630Z"
+        "lastPassiveAnalysisTimestamp": "2025-05-25T23:25:09.478Z"
     },
     "43508639514868@lid": {
         "name": "Leónidas 😢🇧🇷",
@@ -955,9 +970,14 @@
                 "trait": "Experimenta problemas con la visualización de stickers animados.",
                 "sourceMessageSnippet": "A vos también no te pasaba de que los estikers no te aparecían con mov...",
                 "timestamp": "2025-05-24T04:09:13.515Z"
+            },
+            {
+                "trait": "Dedica algo a otra persona, posiblemente una canción o una creación artística.",
+                "sourceMessageSnippet": "@91899583008789 si algún día vez esto te la dedico",
+                "timestamp": "2025-05-26T01:52:52.017Z"
             }
         ],
-        "lastPassiveAnalysisTimestamp": "2025-05-24T04:09:13.515Z"
+        "lastPassiveAnalysisTimestamp": "2025-05-26T01:52:52.017Z"
     },
     "96860723216634@lid": {
         "name": "lykaia:",
@@ -1738,5 +1758,16 @@
             }
         ],
         "lastPassiveAnalysisTimestamp": "2025-05-23T22:44:49.579Z"
+    },
+    "268676460712176@lid": {
+        "name": "Alexandra",
+        "inferredTraits": [
+            {
+                "trait": "Necesita dinero y está dispuesta a ganar 3.50 soles a través de una aplicación.",
+                "sourceMessageSnippet": "Si quieren ganar 3.50 para yape al instante sólo por descargar una app...",
+                "timestamp": "2025-05-25T21:35:40.836Z"
+            }
+        ],
+        "lastPassiveAnalysisTimestamp": "2025-05-25T21:35:40.836Z"
     }
 }

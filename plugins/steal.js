@@ -1,7 +1,7 @@
 // plugins/steal.js
-// Comando para robar dinero EN MANO a otros usuarios.
+// Comando para robar dinero EN MANO a otros usuarios, con verificación de registro.
 
-const { getUserData, saveUserData, msToTime } = require('./shared-economy');
+const { getUserData, saveUserData, msToTime, setUserRegistrationState, clearUserRegistrationState } = require('./shared-economy'); // Añadir setUserRegistrationState y clearUserRegistrationState si se usan directamente
 
 const COOLDOWN_STEAL_MS = 30 * 60 * 1000;
 const STEAL_SUCCESS_CHANCE = 0.60;
@@ -11,13 +11,80 @@ const STEAL_FAIL_PENALTY_MONEY = 500;
 const MONEY_SYMBOL = '$';
 
 const execute = async (client, message, args, commandName) => {
-    const attackerId = message.author || message.from;
-    const attackerUser = await getUserData(attackerId, message);
+    // --- INICIO Bloque de Verificación de Registro ---
+    const senderContact = await message.getContact();
+    if (!senderContact) {
+        console.error(`[Steal Plugin] No se pudo obtener el contacto del remitente.`);
+        try { await message.reply("❌ No pude identificarte. Inténtalo de nuevo."); } catch(e) { console.error(`[Steal Plugin] Error enviando reply de no identificación:`, e); }
+        return;
+    }
+    const commandSenderId = senderContact.id._serialized; 
+    const attackerUser = await getUserData(commandSenderId, message); // Renombrar 'user' a 'attackerUser' para claridad en este plugin
 
     if (!attackerUser) {
-        console.error(`[Steal Plugin] No se pudieron obtener los datos del atacante ${attackerId}`);
-        return message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo.");
+        console.error(`[Steal Plugin] No se pudieron obtener los datos del usuario para ${commandSenderId}`);
+        try { await message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo."); } catch(e) { console.error(`[Steal Plugin] Error enviando reply de error de datos:`, e); }
+        return;
     }
+
+    if (!attackerUser.password) { // Si el ATACANTE no tiene contraseña, iniciar flujo de registro
+        const currentChat = await message.getChat();
+        if (!currentChat.isGroup) {
+            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.steal`) en un chat grupal para configurar tu número y contraseña.");
+            return;
+        }
+        const userNameToMention = attackerUser.pushname || commandSenderId.split('@')[0];
+        if (!attackerUser.phoneNumber) { // CASO A: Sin contraseña NI número
+            attackerUser.registration_state = 'esperando_numero_telefono';
+            await saveUserData(commandSenderId, attackerUser); 
+            console.log(`[Steal Plugin] Usuario ${commandSenderId} (${userNameToMention}) no tiene contraseña ni teléfono. Solicitando número. Estado: esperando_numero_telefono.`);
+            const currentPrefix = message.body.charAt(0);
+            await message.reply(
+                `👋 ¡Hola @${userNameToMention}!\n\n` +
+                `Para usar las funciones de economía (como robar), primero necesitamos registrar tu número de teléfono.\n\n` +
+                `Por favor, responde en ESTE CHAT GRUPAL con el comando:\n` +
+                `*${currentPrefix}mifono +TUNUMEROCOMPLETO*\n` +
+                `(Ej: ${currentPrefix}mifono +11234567890)\n\n` +
+                `Tu nombre de perfil actual es: *${attackerUser.pushname || 'No detectado'}*.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            return; // Detener la ejecución del comando .steal
+        } else { // CASO B: Tiene número PERO no contraseña
+            const dmChatIdForPassword = `${attackerUser.phoneNumber}@c.us`;
+            let userStateTarget = await getUserData(dmChatIdForPassword); 
+            userStateTarget.registration_state = 'esperando_contraseña_dm';
+            await saveUserData(dmChatIdForPassword, userStateTarget); 
+            console.log(`[Steal Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${attackerUser.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+            let displayPhoneNumber = attackerUser.phoneNumber;
+            if (attackerUser.phoneNumber && !String(attackerUser.phoneNumber).startsWith('+')) {
+                displayPhoneNumber = `+${attackerUser.phoneNumber}`;
+            }
+            await message.reply(
+                `🛡️ ¡Hola @${userNameToMention}!\n\n` +
+                `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            try {
+                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
+                console.log(`[Steal Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+            } catch(dmError){
+                console.error(`[Steal Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Steal Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+            }
+            return; // Detener la ejecución del comando .steal
+        }
+    }
+    // --- FIN Bloque de Verificación de Registro ---
+
+    // Si llegamos aquí, el attackerUser está registrado (tiene contraseña)
+    console.log(`[Steal Plugin] Usuario ${commandSenderId} (${attackerUser.pushname || 'N/A'}) está registrado. Procesando comando .steal.`);
+
+    // --- Lógica Específica del Comando .steal ---
+    const attackerId = commandSenderId; // Reafirmar para claridad, ya lo teníamos
+    // attackerUser ya está definido y es el objeto de datos del atacante
 
     const now = Date.now();
     const timeSinceLastSteal = now - (attackerUser.laststeal || 0);
@@ -58,13 +125,16 @@ const execute = async (client, message, args, commandName) => {
         initialTargetNameForDisplay = `usuario (${targetId.split('@')[0]})`;
     }
 
-    const targetUser = await getUserData(targetId, targetContactInfo);
+    const targetUser = await getUserData(targetId, targetContactInfo); // Obtener datos del objetivo, actualizando su pushname
 
     if (!targetUser) {
         console.error(`[Steal Plugin] No se pudieron obtener los datos del objetivo ${targetId}`);
         return message.reply("❌ Hubo un error al obtener los datos del usuario objetivo.");
     }
     
+    // IMPORTANTE: El objetivo (targetUser) NO necesita estar registrado con contraseña para ser robado.
+    // Solo el atacante (attackerUser) necesita estar registrado.
+
     const finalTargetName = targetUser.pushname || initialTargetNameForDisplay;
     const attackerName = attackerUser.pushname || attackerId.split('@')[0];
 
@@ -76,7 +146,7 @@ const execute = async (client, message, args, commandName) => {
         return message.reply(`💸 *${finalTargetName}* no tiene dinero en mano para robar. ¡Quizás lo tiene en el banco! 😉`);
     }
     
-    attackerUser.laststeal = now; // Establecer cooldown para el atacante INMEDIATAMENTE
+    attackerUser.laststeal = now;
 
     if (typeof attackerUser.money !== 'number' || isNaN(attackerUser.money)) {
         attackerUser.money = 0;
@@ -91,19 +161,16 @@ const execute = async (client, message, args, commandName) => {
         if (stolenAmount <= 0 && targetUser.money > 0) {
              stolenAmount = Math.min(1, targetUser.money);
         }
-        
         if (stolenAmount <= 0 ) {
-             // Solo se actualizó laststeal del atacante, así que solo guardamos al atacante
-             await saveUserData(attackerId, attackerUser); // *** CORREGIDO ***
+             await saveUserData(attackerId, attackerUser);
              return message.reply(`😅 Intentaste robar a *${finalTargetName}*, pero apenas tenía centavos en mano. No conseguiste nada.`);
         }
         
         attackerUser.money += stolenAmount;
         targetUser.money -= stolenAmount;
 
-        // Guardar datos de AMBOS usuarios
-        await saveUserData(attackerId, attackerUser); // *** CORREGIDO ***
-        await saveUserData(targetId, targetUser);   // *** CORREGIDO ***
+        await saveUserData(attackerId, attackerUser);
+        await saveUserData(targetId, targetUser);
 
         console.log(`[Steal Plugin] ${attackerId} (${attackerName}) robó ${stolenAmount} de dinero EN MANO a ${targetId} (${finalTargetName}). Saldo atacante: ${attackerUser.money}, Saldo objetivo: ${targetUser.money}`);
         return message.reply(`*💰 ¡Éxito!* Le robaste *${MONEY_SYMBOL}${stolenAmount}* (en mano) a *${finalTargetName}*.\nAhora tienes ${MONEY_SYMBOL}${attackerUser.money}.`);
@@ -111,9 +178,7 @@ const execute = async (client, message, args, commandName) => {
         const penalty = Math.min(attackerUser.money, STEAL_FAIL_PENALTY_MONEY);
         attackerUser.money -= penalty;
         if (attackerUser.money < 0) attackerUser.money = 0;
-
-        // Solo se modificaron datos del atacante (laststeal y money)
-        await saveUserData(attackerId, attackerUser); // *** CORREGIDO ***
+        await saveUserData(attackerId, attackerUser);
 
         console.log(`[Steal Plugin] ${attackerId} (${attackerName}) falló robando a ${targetId} (${finalTargetName}) y perdió ${penalty} de dinero. Saldo atacante: ${attackerUser.money}`);
         let replyMsg = `*🚓 ¡Fallaste!* *${finalTargetName}* te descubrió.`;

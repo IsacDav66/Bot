@@ -13,6 +13,7 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.9.0",
+    "bcryptjs": "^3.0.2",
     "canvas": "^3.1.0",
     "chalk": "^5.4.1",
     "chokidar": "^4.0.3",

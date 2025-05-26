@@ -1,20 +1,15 @@
 // plugins/roulette.js
-// Juego de la Ruleta con imagen generada por node-canvas
+// Juego de la Ruleta con imagen generada por node-canvas y verificación de registro.
 
-const fs = require('fs');
+const fs = require('fs'); // Para fs.existsSync
 const path = require('path');
 const { MessageMedia } = require('whatsapp-web.js');
-const { createCanvas, loadImage, registerFont } = require('canvas'); // Importar de node-canvas
-const { getUserData, saveUserData, msToTime } = require('./shared-economy');
+const { createCanvas, loadImage, registerFont } = require('canvas');
+const { getUserData, saveUserData, msToTime, pickRandom, setUserRegistrationState, clearUserRegistrationState } = require('./shared-economy');
 
 const MONEY_SYMBOL = '$';
-// Ruta a tu imagen de fondo de la ruleta (sin bola)
-const ROULETTE_BASE_IMAGE_PATH = path.join(__dirname, '..', 'assets', 'roulette_base.png'); // CAMBIA ESTO SI ES NECESARIO
-// Opcional: registrar una fuente para dibujar el número si no usamos imagen base
-// registerFont(path.join(__dirname, '..', 'assets', 'fonts', 'arial.ttf'), { family: 'Arial' });
-
-
-const COOLDOWN_ROULETTE_MS = 1 * 60 * 1000;
+const ROULETTE_BASE_IMAGE_PATH = path.join(__dirname, '..', 'assets', 'roulette_base.png');
+const COOLDOWN_ROULETTE_MS = 1 * 60 * 1000; // 1 minuto
 
 const rouletteNumbers = {
     0: 'green', 1: 'red', 2: 'black', 3: 'red', 4: 'black', 5: 'red', 6: 'black', 7: 'red', 8: 'black', 9: 'red',
@@ -23,12 +18,16 @@ const rouletteNumbers = {
     28: 'black', 29: 'black', 30: 'red', 31: 'black', 32: 'red', 33: 'black', 34: 'red', 35: 'black', 36: 'red'
 };
 const numberKeys = Object.keys(rouletteNumbers).map(Number);
-
-// Orden de los números en una ruleta europea estándar (para calcular ángulos)
-// Esto es CRUCIAL y debe coincidir con tu imagen base si la usas, o con la disposición que dibujes.
 const ROULETTE_LAYOUT = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
-const TOTAL_NUMBERS_ON_WHEEL = ROULETTE_LAYOUT.length; // 37
+const TOTAL_NUMBERS_ON_WHEEL = ROULETTE_LAYOUT.length;
 const ANGLE_PER_NUMBER = 360 / TOTAL_NUMBERS_ON_WHEEL;
+
+// Opcional: Registrar fuente si es necesario para algo en generateRouletteImage, aunque no para los símbolos de ruleta en sí.
+// try {
+//     registerFont(path.join(__dirname, '..', 'assets', 'fonts', 'SomeFont.ttf'), { family: 'SomeFontForRoulette' });
+// } catch (fontError) {
+//     console.warn("[Roulette Plugin] No se pudo registrar la fuente.", fontError.message);
+// }
 
 function ensureLastRoulette(user) {
     if (typeof user.lastroulette !== 'number' || isNaN(user.lastroulette)) {
@@ -36,75 +35,40 @@ function ensureLastRoulette(user) {
     }
 }
 
-// --- Función para generar la imagen de la ruleta ---
 async function generateRouletteImage(winningNumber) {
-    const canvasWidth = 500; // Ajusta según tu imagen base o preferencia
-    const canvasHeight = 500; // Ajusta según tu imagen base o preferencia
+    // ... (código de generateRouletteImage como en tu última versión) ...
+    // (Para brevedad, no lo repito aquí, asumo que es la versión que te funcionaba visualmente)
+    const canvasWidth = 500; 
+    const canvasHeight = 500; 
     const canvas = createCanvas(canvasWidth, canvasHeight);
     const ctx = canvas.getContext('2d');
-
-    // 1. Dibujar fondo (opcional, o cargar imagen base)
     let baseImage;
     try {
         if (fs.existsSync(ROULETTE_BASE_IMAGE_PATH)) {
             baseImage = await loadImage(ROULETTE_BASE_IMAGE_PATH);
             ctx.drawImage(baseImage, 0, 0, canvasWidth, canvasHeight);
         } else {
-            console.warn(`[Roulette Canvas] Imagen base no encontrada en ${ROULETTE_BASE_IMAGE_PATH}. Dibujando ruleta simple.`);
-            // Dibuja una ruleta muy básica si no hay imagen
-            ctx.fillStyle = 'darkgreen';
-            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-            ctx.beginPath();
-            ctx.arc(canvasWidth / 2, canvasHeight / 2, canvasWidth / 2 - 20, 0, Math.PI * 2);
-            ctx.fillStyle = 'green';
-            ctx.fill();
-            ctx.strokeStyle = 'gold';
-            ctx.lineWidth = 5;
-            ctx.stroke();
+            console.warn(`[Roulette Canvas] Imagen base no encontrada en ${ROULETTE_BASE_IMAGE_PATH}.`);
+            ctx.fillStyle = 'darkgreen'; ctx.fillRect(0,0,canvasWidth, canvasHeight); // Fallback
         }
     } catch (err) {
         console.error('[Roulette Canvas] Error cargando imagen base:', err);
-        // Dibuja fondo de emergencia
-        ctx.fillStyle = 'gray';
-        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        ctx.fillStyle = 'gray'; ctx.fillRect(0,0,canvasWidth, canvasHeight); // Fallback
     }
-
-
-    // 2. Calcular posición de la bola
     const centerX = canvasWidth / 2;
     const centerY = canvasHeight / 2;
-    // El radio donde se asientan los números. Ajusta esto cuidadosamente.
-    // Debería ser un poco menos que el radio del anillo de números en tu imagen.
-    const numbersRingRadius = canvasWidth / 2 * 0.75; // Ejemplo: 75% del radio del canvas/2
-
+    const numbersRingRadius = canvasWidth / 2 * 0.75;
     const numberIndexInLayout = ROULETTE_LAYOUT.indexOf(winningNumber);
     if (numberIndexInLayout === -1) {
         console.error(`[Roulette Canvas] Número ganador ${winningNumber} no encontrado en ROULETTE_LAYOUT.`);
-        // Dibuja la bola en el centro o en el 0 por defecto si hay error
-        const angle = 0; // Ángulo para el número 0
-         const ballX = centerX + numbersRingRadius * Math.cos(angle * Math.PI / 180 - Math.PI / 2);
-         const ballY = centerY + numbersRingRadius * Math.sin(angle * Math.PI / 180 - Math.PI / 2);
-         ctx.beginPath();
-         ctx.arc(ballX, ballY, 10, 0, Math.PI * 2); // Dibuja la bola (radio 10)
-         ctx.fillStyle = 'white';
-         ctx.fill();
-         ctx.strokeStyle = 'black';
-         ctx.lineWidth = 1;
-         ctx.stroke();
-         return canvas.toBuffer('image/png'); // Devuelve buffer en caso de error de layout
+        // Dibuja algo por defecto o simplemente devuelve el canvas base
+        return canvas.toBuffer('image/png');
     }
-
-    // El ángulo 0 es arriba. El primer número en ROULETTE_LAYOUT (0) está en la parte superior.
-    // Los ángulos aumentan en sentido horario.
-    // Restamos 90 grados (Math.PI / 2) porque en canvas 0 rad es a la derecha, y queremos que sea arriba.
     const angleDegrees = numberIndexInLayout * ANGLE_PER_NUMBER;
     const angleRadians = (angleDegrees * Math.PI / 180) - (Math.PI / 2);
-
     const ballX = centerX + numbersRingRadius * Math.cos(angleRadians);
     const ballY = centerY + numbersRingRadius * Math.sin(angleRadians);
-    const ballRadius = canvasWidth / 40; // Radio de la bola, ej: 1/40 del ancho del canvas
-
-    // 3. Dibujar la bola
+    const ballRadius = canvasWidth / 40;
     ctx.beginPath();
     ctx.arc(ballX, ballY, ballRadius, 0, Math.PI * 2);
     ctx.fillStyle = 'white';
@@ -112,25 +76,86 @@ async function generateRouletteImage(winningNumber) {
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 2;
     ctx.stroke();
-
-    // Opcional: Dibujar el número ganador en el centro
-    // ctx.fillStyle = 'white';
-    // ctx.font = 'bold 48px Arial'; // Asegúrate que la fuente esté disponible o regístrala
-    // ctx.textAlign = 'center';
-    // ctx.textBaseline = 'middle';
-    // ctx.fillText(winningNumber.toString(), centerX, centerY);
-
     return canvas.toBuffer('image/png');
 }
 
 
 const execute = async (client, message, args, commandName) => {
-    const userId = message.author || message.from;
-    const user = await getUserData(userId, message);
-    ensureLastRoulette(user);
-    const now = Date.now();
+    // --- INICIO Bloque de Verificación de Registro ---
+    const senderContact = await message.getContact();
+    if (!senderContact) {
+        console.error(`[Roulette Plugin] No se pudo obtener el contacto del remitente.`);
+        try { await message.reply("❌ No pude identificarte. Inténtalo de nuevo."); } catch(e) { console.error(`[Roulette Plugin] Error enviando reply de no identificación:`, e); }
+        return;
+    }
+    const commandSenderId = senderContact.id._serialized; 
+    const user = await getUserData(commandSenderId, message); 
 
-    const timeSinceLastRoulette = now - user.lastroulette;
+    if (!user) {
+        console.error(`[Roulette Plugin] No se pudieron obtener los datos del usuario para ${commandSenderId}`);
+        try { await message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo."); } catch(e) { console.error(`[Roulette Plugin] Error enviando reply de error de datos:`, e); }
+        return;
+    }
+
+    if (!user.password) {
+        const currentChat = await message.getChat();
+        if (!currentChat.isGroup) {
+            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.roulette`) en un chat grupal para configurar tu número y contraseña.");
+            return;
+        }
+        const userNameToMention = user.pushname || commandSenderId.split('@')[0];
+        if (!user.phoneNumber) { // CASO A: Sin contraseña NI número
+            user.registration_state = 'esperando_numero_telefono';
+            await saveUserData(commandSenderId, user); 
+            console.log(`[Roulette Plugin] Usuario ${commandSenderId} (${userNameToMention}) no tiene contraseña ni teléfono. Solicitando número. Estado: esperando_numero_telefono.`);
+            const currentPrefix = message.body.charAt(0);
+            await message.reply(
+                `👋 ¡Hola @${userNameToMention}!\n\n` +
+                `Para usar las funciones de economía (como la ruleta), primero necesitamos registrar tu número de teléfono.\n\n` +
+                `Por favor, responde en ESTE CHAT GRUPAL con el comando:\n` +
+                `*${currentPrefix}mifono +TUNUMEROCOMPLETO*\n` +
+                `(Ej: ${currentPrefix}mifono +11234567890)\n\n` +
+                `Tu nombre de perfil actual es: *${user.pushname || 'No detectado'}*.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            return; // Detener la ejecución del comando .roulette
+        } else { // CASO B: Tiene número PERO no contraseña
+            const dmChatIdForPassword = `${user.phoneNumber}@c.us`;
+            let userStateTarget = await getUserData(dmChatIdForPassword); 
+            userStateTarget.registration_state = 'esperando_contraseña_dm';
+            await saveUserData(dmChatIdForPassword, userStateTarget); 
+            console.log(`[Roulette Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+            let displayPhoneNumber = user.phoneNumber;
+            if (user.phoneNumber && !String(user.phoneNumber).startsWith('+')) {
+                displayPhoneNumber = `+${user.phoneNumber}`;
+            }
+            await message.reply(
+                `🛡️ ¡Hola @${userNameToMention}!\n\n` +
+                `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            try {
+                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
+                console.log(`[Roulette Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+            } catch(dmError){
+                console.error(`[Roulette Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Roulette Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+            }
+            return; // Detener la ejecución del comando .roulette
+        }
+    }
+    // --- FIN Bloque de Verificación de Registro ---
+
+    // Si llegamos aquí, el usuario (commandSenderId) está registrado (tiene contraseña)
+    console.log(`[Roulette Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) está registrado. Procesando comando .roulette.`);
+    
+    ensureLastRoulette(user); // 'user' es el objeto correcto
+    const now = Date.now();
+    const timeSinceLastRoulette = now - (user.lastroulette || 0);
+
     if (timeSinceLastRoulette < COOLDOWN_ROULETTE_MS) {
         const timeLeft = COOLDOWN_ROULETTE_MS - timeSinceLastRoulette;
         return message.reply(`*🎰 La mesa de la ruleta aún está ocupada. Espera ${msToTime(timeLeft)}.*`);
@@ -148,7 +173,7 @@ const execute = async (client, message, args, commandName) => {
         return message.reply("⚠️ Debes apostar una cantidad de dinero válida y positiva.");
     }
     if (typeof user.money !== 'number' || isNaN(user.money) || user.money < betAmount) {
-        return message.reply(`💸 No tienes suficiente dinero en mano (${MONEY_SYMBOL}${user.money || 0}) para apostar ${MONEY_SYMBOL}${betAmount}.`);
+        return message.reply(`💸 No tienes suficiente dinero en mano (${MONEY_SYMBOL}${(user.money || 0).toLocaleString()}) para apostar ${MONEY_SYMBOL}${betAmount.toLocaleString()}.`);
     }
 
     let isValidBet = false, betType = '', payoutMultiplier = 0, winningCondition;
@@ -169,10 +194,10 @@ const execute = async (client, message, args, commandName) => {
 
     user.money -= betAmount;
     user.lastroulette = now;
-    await saveUserData(userId, user);
+    await saveUserData(commandSenderId, user); // Guardar apuesta y cooldown
 
-    await message.reply(`*💸 ${message.pushName || 'Tú'} apuestas ${MONEY_SYMBOL}${betAmount} en ${betType}.*\nGirando la ruleta... 🎡`);
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Menor espera si la imagen se genera rápido
+    await message.reply(`*💸 ${user.pushname || 'Tú'} apuestas ${MONEY_SYMBOL}${betAmount.toLocaleString()} en ${betType}.*\nGirando la ruleta... 🎡`);
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     const winningNumber = numberKeys[Math.floor(Math.random() * numberKeys.length)];
     const winningColor = rouletteNumbers[winningNumber];
@@ -183,17 +208,20 @@ const execute = async (client, message, args, commandName) => {
 
     if (winningCondition(winningColor, winningNumber)) {
         won = true;
-        const winnings = betAmount * payoutMultiplier;
-        const profit = winnings - betAmount;
-        user.money += winnings;
-        resultMessage += `*🎉 ¡Felicidades! ¡Has ganado!*\nRecibes ${MONEY_SYMBOL}${winnings} (ganancia neta de ${MONEY_SYMBOL}${profit}).`;
+        const winnings = betAmount * payoutMultiplier; // Ganancia total (incluye la apuesta original)
+        // const profit = winnings - betAmount; // Ganancia neta (si payoutMultiplier ya es la ganancia neta, ajustar)
+                                            // Si payoutMultiplier es 2 (para rojo/negro), winnings = bet*2, profit = bet.
+        if (typeof user.money !== 'number' || isNaN(user.money)) user.money = 0;
+        user.money += winnings; 
+        resultMessage += `*🎉 ¡Felicidades! ¡Has ganado!*\nRecibes ${MONEY_SYMBOL}${winnings.toLocaleString()}.`;
     } else {
-        resultMessage += `*😥 ¡Mala suerte! Has perdido tu apuesta de ${MONEY_SYMBOL}${betAmount}.*`;
+        resultMessage += `*😥 ¡Mala suerte! Has perdido tu apuesta de ${MONEY_SYMBOL}${betAmount.toLocaleString()}.*`;
     }
-    user.money = Math.max(0, user.money);
-    await saveUserData(userId, user);
-    resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money}`;
-    console.log(`[Roulette Plugin] Usuario ${userId} apostó ${betAmount} en ${betType}. Resultado: ${winningNumber} ${winningColor}. Ganó: ${won}. Dinero final: ${user.money}`);
+    user.money = Math.max(0, user.money); // Asegurar que no sea negativo
+    await saveUserData(commandSenderId, user); // Guardar el resultado final del dinero
+
+    resultMessage += `\n\nTu dinero actual: ${MONEY_SYMBOL}${user.money.toLocaleString()}`;
+    console.log(`[Roulette Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) apostó ${betAmount} en ${betType}. Resultado: ${winningNumber} ${winningColor}. Ganó: ${won}. Dinero final: ${user.money}`);
 
     try {
         const imageBuffer = await generateRouletteImage(winningNumber);
@@ -209,6 +237,6 @@ module.exports = {
     name: 'Ruleta Canvas',
     aliases: ['roulette', 'ruleta', 'rl'],
     description: 'Apuesta dinero en la ruleta (rojo/negro/verde/número) con imagen generada.',
-    category: 'Juegos',
+    category: 'Juegos', // O 'Economía'
     execute,
 };

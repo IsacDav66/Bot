@@ -1,37 +1,26 @@
 // plugins/daily.js
-// Comando para reclamar recompensas diarias y mantener rachas.
+// Comando para reclamar recompensas diarias y mantener rachas, con verificación de registro.
 
-const { getUserData, saveUserData, msToTime } = require('./shared-economy');
-const MONEY_SYMBOL = '$';
-const EXP_SYMBOL = '⭐'; // O el que uses para EXP
+const { getUserData, saveUserData, msToTime, setUserRegistrationState, clearUserRegistrationState } = require('./shared-economy'); // Asegúrate de importar las funciones de estado
+const MONEY_SYMBOL = '💵';
+const EXP_SYMBOL = '⭐';
 
-const COOLDOWN_DAILY_MS = 23 * 60 * 60 * 1000; // 23 horas para reclamar
+const COOLDOWN_DAILY_MS = 23 * 60 * 60 * 1000;
 const MAX_STREAK_DAYS = 30;
-const STREAK_LOSS_THRESHOLD_MS = 47 * 60 * 60 * 1000; // Si pasan más de 47h, pierde racha
+const STREAK_LOSS_THRESHOLD_MS = 47 * 60 * 60 * 1000;
 
-// --- Configuración de Recompensas Base ---
-// Estas son las recompensas para el día 1 de racha. Aumentarán con la racha.
 const BASE_DAILY_MONEY = 100;
 const BASE_DAILY_EXP = 500;
 
-// --- Multiplicadores por Racha (Ejemplos, puedes ajustarlos) ---
-// Cuanto más alta la racha, mayor el multiplicador sobre la recompensa base.
-// Esta función determina el multiplicador. Puedes hacerla más compleja.
 function getStreakMultiplier(streakDays) {
-    if (streakDays <= 0) return 1; // Día 0 o racha perdida
-    if (streakDays >= MAX_STREAK_DAYS) streakDays = MAX_STREAK_DAYS; // Capar en el máximo
-
-    // Ejemplo: Aumenta un 10% por día de racha, hasta un máximo.
-    // Multiplicador = 1 + (0.10 * (días_de_racha - 1))
-    // Para el día 1: 1 + (0.10 * 0) = 1
-    // Para el día 5: 1 + (0.10 * 4) = 1.4
-    // Para el día 30: 1 + (0.10 * 29) = 3.9
-    let multiplier = 1 + (0.05 * (streakDays -1)); // 5% por día de racha adicional
-    return Math.min(multiplier, 5); // Limitar el multiplicador máximo (ej. a 5x)
+    if (streakDays <= 0) return 1;
+    if (streakDays >= MAX_STREAK_DAYS) streakDays = MAX_STREAK_DAYS;
+    let multiplier = 1 + (0.05 * (streakDays -1));
+    return Math.min(multiplier, 5);
 }
 
-
-// Asegurar que los campos para daily existan en el usuario
+// ensureDailyFields sigue siendo útil para inicializar campos específicos de daily si getUserData no lo hiciera
+// (aunque con DEFAULT_USER_FIELDS en shared-economy, debería estar cubierto).
 function ensureDailyFields(user) {
     if (typeof user.lastdaily !== 'number' || isNaN(user.lastdaily)) {
         user.lastdaily = 0;
@@ -42,39 +31,101 @@ function ensureDailyFields(user) {
 }
 
 const execute = async (client, message, args, commandName) => {
-    const userId = message.author || message.from;
-    const user = await getUserData(userId, message); // Obtener/actualizar pushname
-    ensureDailyFields(user); // Asegurar que lastdaily y dailystreak existan y sean números
+    // --- INICIO Bloque de Verificación de Registro ---
+    const senderContact = await message.getContact();
+    if (!senderContact) {
+        console.error(`[Daily Plugin] No se pudo obtener el contacto del remitente.`);
+        try { await message.reply("❌ No pude identificarte. Inténtalo de nuevo."); } catch(e) { console.error(`[Daily Plugin] Error enviando reply de no identificación:`, e); }
+        return;
+    }
+    const commandSenderId = senderContact.id._serialized; 
+    const user = await getUserData(commandSenderId, message); 
 
+    if (!user) {
+        console.error(`[Daily Plugin] No se pudieron obtener los datos del usuario para ${commandSenderId}`);
+        try { await message.reply("❌ Hubo un error al obtener tus datos. Inténtalo de nuevo."); } catch(e) { console.error(`[Daily Plugin] Error enviando reply de error de datos:`, e); }
+        return;
+    }
+
+    if (!user.password) {
+        const currentChat = await message.getChat();
+        if (!currentChat.isGroup) {
+            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.daily`) en un chat grupal para configurar tu número y contraseña.");
+            return;
+        }
+        const userNameToMention = user.pushname || commandSenderId.split('@')[0];
+        if (!user.phoneNumber) { // CASO A: Sin contraseña NI número
+            user.registration_state = 'esperando_numero_telefono';
+            await saveUserData(commandSenderId, user); 
+            console.log(`[Daily Plugin] Usuario ${commandSenderId} (${userNameToMention}) no tiene contraseña ni teléfono. Solicitando número. Estado: esperando_numero_telefono.`);
+            const currentPrefix = message.body.charAt(0);
+            await message.reply(
+                `👋 ¡Hola @${userNameToMention}!\n\n` +
+                `Para usar las funciones de economía (como la recompensa diaria), primero necesitamos registrar tu número de teléfono.\n\n` +
+                `Por favor, responde en ESTE CHAT GRUPAL con el comando:\n` +
+                `*${currentPrefix}mifono +TUNUMEROCOMPLETO*\n` +
+                `(Ej: ${currentPrefix}mifono +11234567890)\n\n` +
+                `Tu nombre de perfil actual es: *${user.pushname || 'No detectado'}*.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            return; // Detener la ejecución del comando .daily
+        } else { // CASO B: Tiene número PERO no contraseña
+            const dmChatIdForPassword = `${user.phoneNumber}@c.us`;
+            let userStateTarget = await getUserData(dmChatIdForPassword); 
+            userStateTarget.registration_state = 'esperando_contraseña_dm';
+            await saveUserData(dmChatIdForPassword, userStateTarget); 
+            console.log(`[Daily Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+            let displayPhoneNumber = user.phoneNumber;
+            if (user.phoneNumber && !String(user.phoneNumber).startsWith('+')) {
+                displayPhoneNumber = `+${user.phoneNumber}`;
+            }
+            await message.reply(
+                `🛡️ ¡Hola @${userNameToMention}!\n\n` +
+                `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
+                undefined, { mentions: [commandSenderId] }
+            );
+            const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            try {
+                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
+                console.log(`[Daily Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+            } catch(dmError){
+                console.error(`[Daily Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Daily Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+            }
+            return; // Detener la ejecución del comando .daily
+        }
+    }
+    // --- FIN Bloque de Verificación de Registro ---
+
+    // Si llegamos aquí, el usuario (commandSenderId) está registrado (tiene contraseña)
+    console.log(`[Daily Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) está registrado. Procesando comando .daily.`);
+    
+    ensureDailyFields(user); // 'user' es el objeto correcto, ya incluye los campos de daily si existen
     const now = Date.now();
-    const timeSinceLastDaily = now - user.lastdaily;
+    const timeSinceLastDaily = now - (user.lastdaily || 0); // Usar || 0 como fallback
 
     // Verificar si perdió la racha
-    // Si no ha reclamado (lastdaily es 0) Y su racha es > 0, es un error, resetear. O si han pasado más de X horas.
     if (user.lastdaily !== 0 && timeSinceLastDaily > STREAK_LOSS_THRESHOLD_MS) {
         await message.reply(`😢 ¡Oh no, *${user.pushname || 'tú'}*! Has perdido tu racha de ${user.dailystreak} días por no reclamar a tiempo. Tu racha vuelve a 0.`);
         user.dailystreak = 0;
-        // No actualizamos lastdaily aquí, se actualizará si reclama ahora.
-        // Podrías guardar aquí si quieres que el reseteo de racha sea inmediato en el JSON.
-        // await saveUserData();
-    } else if (user.lastdaily === 0 && user.dailystreak > 0) { // Raro, pero por si acaso
-        console.warn(`[Daily Plugin] Usuario ${userId} tenía racha ${user.dailystreak} pero lastdaily era 0. Reseteando racha.`);
+        // No es necesario guardar aquí inmediatamente, se guardará al reclamar la nueva recompensa o con el siguiente comando.
+    } else if (user.lastdaily === 0 && user.dailystreak > 0) {
+        console.warn(`[Daily Plugin] Usuario ${commandSenderId} tenía racha ${user.dailystreak} pero lastdaily era 0. Reseteando racha.`);
         user.dailystreak = 0;
     }
-
 
     // Verificar cooldown para reclamar
     if (user.lastdaily !== 0 && timeSinceLastDaily < COOLDOWN_DAILY_MS) {
         const timeLeft = COOLDOWN_DAILY_MS - timeSinceLastDaily;
-        return message.reply(`🎁 Ya reclamaste tu recompensa diaria. Vuelve en *${msToTime(timeLeft)}*.\nTu racha actual: ${user.dailystreak} día(s).`);
+        return message.reply(`🎁 Ya reclamaste tu recompensa diaria. Vuelve en *${msToTime(timeLeft)}*.\nTu racha actual: ${user.dailystreak || 0} día(s).`);
     }
 
-    // Si llega aquí, puede reclamar.
-    // Si lastdaily es 0 (primera vez o racha perdida y no ha reclamado desde entonces), la racha es 0.
-    // Si no, incrementar la racha.
-    if (user.lastdaily === 0) { // Primera vez reclamando o después de perder racha
-        user.dailystreak = 1; // Comienza racha en 1
-    } else { // Reclamando consecutivamente (dentro del umbral)
+    // Actualizar racha
+    if (user.lastdaily === 0 || user.dailystreak === 0) { // Si es la primera vez o perdió la racha
+        user.dailystreak = 1;
+    } else { // Reclamando consecutivamente
         user.dailystreak = Math.min(user.dailystreak + 1, MAX_STREAK_DAYS);
     }
 
@@ -84,14 +135,13 @@ const execute = async (client, message, args, commandName) => {
     const moneyEarned = Math.floor(BASE_DAILY_MONEY * streakMultiplier);
     const expEarned = Math.floor(BASE_DAILY_EXP * streakMultiplier);
 
-    // Aplicar recompensas
     if (typeof user.money !== 'number' || isNaN(user.money)) user.money = 0;
     if (typeof user.exp !== 'number' || isNaN(user.exp)) user.exp = 0;
     user.money += moneyEarned;
     user.exp += expEarned;
-    user.lastdaily = now; // Actualizar el timestamp de la última reclamación
+    user.lastdaily = now;
 
-    await saveUserData(userId, user); // Guardar todos los cambios
+    await saveUserData(commandSenderId, user);
 
     let replyMessage = `🎉 ¡Recompensa Diaria Reclamada por *${user.pushname || 'ti'}*! 🎉\n\n` +
                        ` Streak Actual: 🔥 *${currentStreak} día(s)* (Multiplicador: x${streakMultiplier.toFixed(2)})\n\n` +
@@ -111,13 +161,13 @@ const execute = async (client, message, args, commandName) => {
                     `  ${EXP_SYMBOL} ${user.exp.toLocaleString()}`;
 
     await message.reply(replyMessage);
-    console.log(`[Daily Plugin] Usuario ${userId} (${user.pushname}) reclamó daily. Racha: ${currentStreak}. Ganó: $${moneyEarned}, EXP ${expEarned}.`);
+    console.log(`[Daily Plugin] Usuario ${commandSenderId} (${user.pushname || 'N/A'}) reclamó daily. Racha: ${currentStreak}. Ganó: $${moneyEarned}, EXP ${expEarned}.`);
 };
 
 module.exports = {
     name: 'Recompensa Diaria',
     aliases: ['daily', 'diario', 'recompensa'],
     description: 'Reclama tu recompensa diaria y mantén tu racha para mejores premios.',
-    category: 'Economía', // O 'Juegos'
+    category: 'Economía',
     execute,
 };
