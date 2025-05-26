@@ -60,7 +60,7 @@ const execute = async (client, message, args, commandName) => { // commandName e
     if (!user.password) {
         const currentChat = await message.getChat();
         if (!currentChat.isGroup) {
-            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.crime`) en un chat grupal para configurar tu número y contraseña.");
+            await message.reply(" 🔒Comando exclusivo de grupos. Por favor, usa este comando en un grupo para iniciar tu registro o usar las funciones de economía.");
             return;
         }
         const userNameToMention = user.pushname || commandSenderId.split('@')[0];
@@ -79,32 +79,48 @@ const execute = async (client, message, args, commandName) => { // commandName e
                 undefined, { mentions: [commandSenderId] }
             );
             return; // Detener la ejecución del comando .crime
-        } else { // CASO B: Tiene número PERO no contraseña
-            const dmChatIdForPassword = `${user.phoneNumber}@c.us`;
-            let userStateTarget = await getUserData(dmChatIdForPassword); 
-            userStateTarget.registration_state = 'esperando_contraseña_dm';
-            await saveUserData(dmChatIdForPassword, userStateTarget); 
-            console.log(`[Crime Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+        } else { // CASO B: Tiene número (en user.phoneNumber de la BD, para commandSenderId) PERO NO contraseña
+            // 'user' aquí es el objeto de datos para 'commandSenderId'
+            // y user.phoneNumber ya tiene el número guardado.
+
+            user.registration_state = 'esperando_contraseña_dm'; // Establecer el estado en el objeto del commandSenderId
+            await saveUserData(commandSenderId, user); // Guardar el estado actualizado PARA EL commandSenderId
+            
+            const userNameToMention = user.pushname || commandSenderId.split('@')[0];
+            // El console.log debe reflejar que el estado se guardó para commandSenderId
+            console.log(`[Crime Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ÉL MISMO (${commandSenderId}).`);
+
             let displayPhoneNumber = user.phoneNumber;
             if (user.phoneNumber && !String(user.phoneNumber).startsWith('+')) {
                 displayPhoneNumber = `+${user.phoneNumber}`;
             }
+
             await message.reply(
                 `🛡️ ¡Hola @${userNameToMention}!\n\n` +
                 `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
-                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`+
+                `‼️Si quieres actualizar tu numero escribe .actualizarfono +52111222333 RECUERDA INCLUIR TODO TU NUMERO Y CODIGO DE PAIS\n` ,
                 undefined, { mentions: [commandSenderId] }
             );
+            
+            // El DM se sigue enviando al ID construido a partir del phoneNumber, lo cual está bien.
+            const dmChatIdToSendTo = `${user.phoneNumber}@c.us`;
             const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            
+            console.log(`[Crime Plugin DM DEBUG] Intentando enviar DM para contraseña.`);
+            console.log(`[Crime Plugin DM DEBUG] Target para DM (construido desde phoneNumber): ${dmChatIdToSendTo}`);
+            // ... (try-catch para client.sendMessage(dmChatIdToSendTo, ...)) ...
             try {
-                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
-                console.log(`[Crime Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+                await client.sendMessage(dmChatIdToSendTo, dmMessageContent);
+                console.log(`[Crime Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdToSendTo}.`);
             } catch(dmError){
-                console.error(`[Crime Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Crime Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdToSendTo}:`, dmError);
                 console.error(`[Crime Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
                 await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+                // Si el DM falla, el estado 'esperando_contraseña_dm' sigue en commandSenderId.
+                // No necesitamos limpiar el estado de dmChatIdToSendTo porque no lo modificamos allí.
             }
-            return; // Detener la ejecución del comando .crime
+            return; 
         }
     }
     // --- FIN Bloque de Verificación de Registro ---

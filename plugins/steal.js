@@ -19,7 +19,7 @@ const execute = async (client, message, args, commandName) => {
         return;
     }
     const commandSenderId = senderContact.id._serialized; 
-    const attackerUser = await getUserData(commandSenderId, message); // Renombrar 'user' a 'attackerUser' para claridad en este plugin
+    const attackerUser = await getUserData(commandSenderId, message); // 'user' se renombra a 'attackerUser' para este plugin
 
     if (!attackerUser) {
         console.error(`[Steal Plugin] No se pudieron obtener los datos del usuario para ${commandSenderId}`);
@@ -30,10 +30,11 @@ const execute = async (client, message, args, commandName) => {
     if (!attackerUser.password) { // Si el ATACANTE no tiene contraseña, iniciar flujo de registro
         const currentChat = await message.getChat();
         if (!currentChat.isGroup) {
-            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.steal`) en un chat grupal para configurar tu número y contraseña.");
+            await message.reply(" 🔒Comando exclusivo de grupos. Por favor, usa este comando en un grupo para iniciar tu registro o usar las funciones de economía.");
             return;
         }
         const userNameToMention = attackerUser.pushname || commandSenderId.split('@')[0];
+
         if (!attackerUser.phoneNumber) { // CASO A: Sin contraseña NI número
             attackerUser.registration_state = 'esperando_numero_telefono';
             await saveUserData(commandSenderId, attackerUser); 
@@ -41,7 +42,7 @@ const execute = async (client, message, args, commandName) => {
             const currentPrefix = message.body.charAt(0);
             await message.reply(
                 `👋 ¡Hola @${userNameToMention}!\n\n` +
-                `Para usar las funciones de economía (como robar), primero necesitamos registrar tu número de teléfono.\n\n` +
+                `Para usar las funciones de economía (como '${commandName}'), primero necesitamos registrar tu número de teléfono.\n\n` +
                 `Por favor, responde en ESTE CHAT GRUPAL con el comando:\n` +
                 `*${currentPrefix}mifono +TUNUMEROCOMPLETO*\n` +
                 `(Ej: ${currentPrefix}mifono +11234567890)\n\n` +
@@ -49,30 +50,46 @@ const execute = async (client, message, args, commandName) => {
                 undefined, { mentions: [commandSenderId] }
             );
             return; // Detener la ejecución del comando .steal
-        } else { // CASO B: Tiene número PERO no contraseña
-            const dmChatIdForPassword = `${attackerUser.phoneNumber}@c.us`;
-            let userStateTarget = await getUserData(dmChatIdForPassword); 
-            userStateTarget.registration_state = 'esperando_contraseña_dm';
-            await saveUserData(dmChatIdForPassword, userStateTarget); 
-            console.log(`[Steal Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${attackerUser.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+
+        } else { // CASO B: Tiene número (en attackerUser.phoneNumber) PERO no contraseña
+            // 'attackerUser' es el objeto de datos para 'commandSenderId'
+            // attackerUser.phoneNumber ya tiene el número guardado.
+
+            attackerUser.registration_state = 'esperando_contraseña_dm'; 
+            await saveUserData(commandSenderId, attackerUser); // Guardar el estado en la entrada del commandSenderId (atacante)
+            
+            console.log(`[Steal Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${attackerUser.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ÉL MISMO (${commandSenderId}).`);
+
             let displayPhoneNumber = attackerUser.phoneNumber;
             if (attackerUser.phoneNumber && !String(attackerUser.phoneNumber).startsWith('+')) {
                 displayPhoneNumber = `+${attackerUser.phoneNumber}`;
             }
+
             await message.reply(
                 `🛡️ ¡Hola @${userNameToMention}!\n\n` +
                 `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
-                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
-                undefined, { mentions: [commandSenderId] }
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`+
+                `‼️Si quieres actualizar tu numero escribe .actualizarfono +52111222333 RECUERDA INCLUIR TODO TU NUMERO Y CODIGO DE PAIS\n` ,
+                undefined, { mentions: [commandSenderId] } // Mencionar al commandSenderId
             );
+            
+            // El DM se envía al ID construido a partir del phoneNumber del atacante
+            const dmChatIdToSendTo = `${attackerUser.phoneNumber}@c.us`;
             const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
+            
+            console.log(`[Steal Plugin DM DEBUG] Intentando enviar DM para contraseña.`);
+            console.log(`[Steal Plugin DM DEBUG] Target para DM (construido desde phoneNumber del atacante): ${dmChatIdToSendTo}`);
+            console.log(`[Steal Plugin DM DEBUG] Mensaje a enviar: "${dmMessageContent}"`);
+
             try {
-                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
-                console.log(`[Steal Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+                await client.sendMessage(dmChatIdToSendTo, dmMessageContent);
+                console.log(`[Steal Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdToSendTo}.`);
             } catch(dmError){
-                console.error(`[Steal Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Steal Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdToSendTo}:`, dmError);
                 console.error(`[Steal Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
-                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña. Asegúrate de que tu número registrado (+"+attackerUser.phoneNumber+") sea correcto y que puedas recibir mensajes. Intenta de nuevo.", undefined, { mentions: [commandSenderId] });
+                // Opcional: Considerar limpiar el estado si el DM falla
+                // await clearUserRegistrationState(commandSenderId); // Si el DM falla, el estado en commandSenderId ya es 'esperando_contraseña_dm'
             }
             return; // Detener la ejecución del comando .steal
         }

@@ -49,7 +49,7 @@ const execute = async (client, message, args, commandName) => {
     if (!user.password) {
         const currentChat = await message.getChat();
         if (!currentChat.isGroup) {
-            await message.reply("🔒 Por favor, inicia tu registro usando un comando de economía (como `.work`) en un chat grupal para configurar tu número y contraseña.");
+            await message.reply(" 🔒Comando exclusivo de grupos. Por favor, usa este comando en un grupo para iniciar tu registro o usar las funciones de economía.");
             return;
         }
 
@@ -75,25 +75,16 @@ const execute = async (client, message, args, commandName) => {
             );
             return;
 
-        } else {
-            // CASO B: TIENE NÚMERO (en user.phoneNumber de la BD) PERO NO CONTRASEÑA
-            // El 'user' object aquí pertenece al 'commandSenderId'.
-            // El 'user.phoneNumber' es el que se registró para 'commandSenderId'.
+        } else { // CASO B: Tiene número (en user.phoneNumber de la BD, para commandSenderId) PERO NO contraseña
+            // 'user' aquí es el objeto de datos para 'commandSenderId'
+            // y user.phoneNumber ya tiene el número guardado.
 
-            // CONSTRUIR el ID de chat para el DM y para el ESTADO a partir del phoneNumber guardado.
-            const dmChatIdForPassword = `${user.phoneNumber}@c.us`;
-
-            // Establecer el estado 'esperando_contraseña_dm' para el dmChatIdForPassword.
-            // Esto implica que necesitamos una entrada en la BD para dmChatIdForPassword si aún no existe.
-            // getUserData para dmChatIdForPassword se asegurará de que exista una entrada.
-            let userStateTarget = await getUserData(dmChatIdForPassword); // Obtener/crear entrada para el ID del número de teléfono
-            userStateTarget.registration_state = 'esperando_contraseña_dm';
-            // Si el pushname del dmChatIdForPassword no se conoce, getUserData no lo actualizará aquí (no hay 'message' de ESE usuario).
-            // Es importante que el pushname de userStateTarget se actualice cuando responda al DM.
-            // Si el dmChatIdForPassword es el mismo que commandSenderId, esto actualizará el 'user' original.
-            await saveUserData(dmChatIdForPassword, userStateTarget); 
+            user.registration_state = 'esperando_contraseña_dm'; // Establecer el estado en el objeto del commandSenderId
+            await saveUserData(commandSenderId, user); // Guardar el estado actualizado PARA EL commandSenderId
             
-            console.log(`[Work Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ${dmChatIdForPassword}.`);
+            const userNameToMention = user.pushname || commandSenderId.split('@')[0];
+            // El console.log debe reflejar que el estado se guardó para commandSenderId
+            console.log(`[Work Plugin] Usuario ${commandSenderId} (${userNameToMention}) tiene teléfono (+${user.phoneNumber}). Estado 'esperando_contraseña_dm' establecido para ÉL MISMO (${commandSenderId}).`);
 
             let displayPhoneNumber = user.phoneNumber;
             if (user.phoneNumber && !String(user.phoneNumber).startsWith('+')) {
@@ -103,28 +94,27 @@ const execute = async (client, message, args, commandName) => {
             await message.reply(
                 `🛡️ ¡Hola @${userNameToMention}!\n\n` +
                 `Ya tenemos tu número de teléfono registrado (*${displayPhoneNumber}*).\n` +
-                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.`,
-                undefined, { mentions: [commandSenderId] } // Mencionar al commandSenderId
+                `Ahora, para completar tu registro, te he enviado un mensaje privado (DM) a ese número para que configures tu contraseña. Por favor, revisa tus DMs.\n`+
+                `‼️Si quieres actualizar tu numero escribe .actualizarfono +52111222333 RECUERDA INCLUIR TODO TU NUMERO Y CODIGO DE PAIS\n` ,
+                undefined, { mentions: [commandSenderId] }
             );
             
+            // El DM se sigue enviando al ID construido a partir del phoneNumber, lo cual está bien.
+            const dmChatIdToSendTo = `${user.phoneNumber}@c.us`;
             const dmMessageContent = "🔑 Por favor, responde a este mensaje con la contraseña que deseas establecer para los comandos de economía.";
             
             console.log(`[Work Plugin DM DEBUG] Intentando enviar DM para contraseña.`);
-            console.log(`[Work Plugin DM DEBUG] Target para DM (construido desde phoneNumber): ${dmChatIdForPassword}`);
-            console.log(`[Work Plugin DM DEBUG] Mensaje a enviar: "${dmMessageContent}"`);
-
+            console.log(`[Work Plugin DM DEBUG] Target para DM (construido desde phoneNumber): ${dmChatIdToSendTo}`);
+            // ... (try-catch para client.sendMessage(dmChatIdToSendTo, ...)) ...
             try {
-                await client.sendMessage(dmChatIdForPassword, dmMessageContent);
-                console.log(`[Work Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdForPassword}.`);
+                await client.sendMessage(dmChatIdToSendTo, dmMessageContent);
+                console.log(`[Work Plugin DM SUCCESS] DM para contraseña enviado exitosamente a ${dmChatIdToSendTo}.`);
             } catch(dmError){
-                console.error(`[Work Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdForPassword}:`, dmError);
+                console.error(`[Work Plugin DM ERROR] Error EXPLICITO enviando DM para contraseña a ${dmChatIdToSendTo}:`, dmError);
                 console.error(`[Work Plugin DM ERROR Object Details]`, JSON.stringify(dmError, Object.getOwnPropertyNames(dmError)));
-                await message.reply("⚠️ No pude enviarte el DM para la contraseña. Asegúrate de que el número que registraste (+"+user.phoneNumber+") sea correcto y que puedas recibir mensajes de mí (quizás inicia un chat privado conmigo). Intenta usar un comando de economía nuevamente.", undefined, { mentions: [commandSenderId] });
-                // Si el DM falla, podríamos querer limpiar el estado del dmChatIdForPassword.
-                // let tempUserStateForClear = await getUserData(dmChatIdForPassword);
-                // tempUserStateForClear.registration_state = null;
-                // await saveUserData(dmChatIdForPassword, tempUserStateForClear);
-                // O usar clearUserRegistrationState(dmChatIdForPassword);
+                await message.reply("⚠️ No pude enviarte el DM para la contraseña...", undefined, { mentions: [commandSenderId] });
+                // Si el DM falla, el estado 'esperando_contraseña_dm' sigue en commandSenderId.
+                // No necesitamos limpiar el estado de dmChatIdToSendTo porque no lo modificamos allí.
             }
             return; 
         }
