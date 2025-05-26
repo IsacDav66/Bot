@@ -4,3 +4,4 @@ node_modules
 .wwebjs_cache
 userData.json
 bot_database.sqlite
+personality_person.json
